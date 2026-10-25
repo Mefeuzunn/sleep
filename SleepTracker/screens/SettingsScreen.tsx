@@ -6,8 +6,9 @@ import {
   TouchableOpacity,
   Switch,
   Platform,
-  SafeAreaView,
   Alert,
+  ScrollView,
+  SafeAreaView,
 } from 'react-native';
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -75,142 +76,162 @@ export default function SettingsScreen({
     }
   };
 
+  // Çıkış Yapma Fonksiyonu
+  const handleLogout = async () => {
+    Alert.alert('Çıkış Yap', 'Hesabınızdan çıkış yapmak istediğinize emin misiniz?', [
+      { text: 'İptal', style: 'cancel' },
+      {
+        text: 'Çıkış Yap',
+        style: 'destructive',
+        onPress: async () => {
+          const { error } = await supabase.auth.signOut();
+          if (error) {
+            Alert.alert('Çıkış Hatası', error.message);
+          }
+          // Çıkış başarılı olduğunda App.tsx içindeki onAuthStateChange tetiklenir
+          // ve ekran otomatik olarak AuthScreen'e döner.
+        },
+      },
+    ]);
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.headerRow}>
-        {onBack && (
-          <TouchableOpacity onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Geri</Text>
-          </TouchableOpacity>
-        )}
-        <Text style={styles.header}>Alarm Ayarları</Text>
-      </View>
-
-      {/* 1. Alarm Saati */}
-      <View style={styles.card}>
-        <Text style={styles.label}>Uyanma Saati</Text>
-        <TouchableOpacity
-          onPress={() => setShowPicker(true)}
-          style={styles.timeTouchable}>
-          <Text style={styles.timeText}>
-            {alarmTime.toLocaleTimeString('tr-TR', {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </Text>
-          <Text style={styles.tapToChange}>Değiştirmek için dokunun</Text>
-        </TouchableOpacity>
-        {showPicker && (
-          <DateTimePicker
-            value={alarmTime}
-            mode="time"
-            is24Hour={true}
-            display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-            onChange={onChangeTime}
-          />
-        )}
-      </View>
-
-      {/* 2. Akıllı Uyanma ve Pencere */}
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <View>
-            <Text style={styles.label}>Akıllı Uyanma (Smart Wake-Up)</Text>
-            <Text style={styles.hint}>Hafif uyku evresinde uyandırır</Text>
-          </View>
-          <Switch
-            value={isSmartAlarmActive}
-            onValueChange={val => {
-              setIsSmartAlarmActive(val);
-              saveSettings('isSmartAlarmActive', val);
-            }}
-            trackColor={{ false: '#334155', true: '#38bdf8' }}
-            thumbColor={isSmartAlarmActive ? '#0284c7' : '#94a3b8'}
-          />
-        </View>
-
-        {isSmartAlarmActive && (
-          <View style={styles.windowContainer}>
-            <Text style={styles.subLabel}>Uyanma Penceresi</Text>
-            <View style={styles.chipsRow}>
-              {WAKE_WINDOWS.map(mins => (
-                <TouchableOpacity
-                  key={mins}
-                  style={[
-                    styles.chip,
-                    wakeWindow === mins && styles.chipActive,
-                  ]}
-                  onPress={() => {
-                    setWakeWindow(mins);
-                    saveSettings('wakeWindow', mins);
-                  }}>
-                  <Text
-                    style={[
-                      styles.chipText,
-                      wakeWindow === mins && styles.chipTextActive,
-                    ]}>
-                    {mins} dk önce
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* 3. Alarm Sesi Seçimi */}
-      <View style={styles.card}>
-        <Text style={styles.label}>Alarm Sesi</Text>
-        <View style={styles.chipsRow}>
-          {SOUND_OPTIONS.map(sound => (
-            <TouchableOpacity
-              key={sound}
-              style={[
-                styles.chip,
-                selectedSound === sound && styles.chipActive,
-              ]}
-              onPress={() => {
-                setSelectedSound(sound);
-                saveSettings('selectedSound', sound);
-              }}>
-              <Text
-                style={[
-                  styles.chipText,
-                  selectedSound === sound && styles.chipTextActive,
-                ]}>
-                {sound}
-              </Text>
+    <SafeAreaView style={styles.safeContainer}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}>
+        <View style={styles.headerRow}>
+          {onBack && (
+            <TouchableOpacity onPress={onBack} style={styles.backButton}>
+              <Text style={styles.backButtonText}>← Geri</Text>
             </TouchableOpacity>
-          ))}
+          )}
+          <Text style={styles.header}>Alarm Ayarları</Text>
         </View>
-      </View>
 
-      {/* 4. Oturumu Kapat Butonu */}
-      <TouchableOpacity
-        style={styles.signOutButton}
-        onPress={() => {
-          Alert.alert('Çıkış Yap', 'Oturumunuzu kapatmak istediğinize emin misiniz?', [
-            { text: 'İptal', style: 'cancel' },
-            {
-              text: 'Çıkış Yap',
-              style: 'destructive',
-              onPress: async () => {
-                await supabase.auth.signOut();
-              },
-            },
-          ]);
-        }}>
-        <Text style={styles.signOutButtonText}>🚪 Oturumu Kapat</Text>
-      </TouchableOpacity>
+        {/* 1. Alarm Saati */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Uyanma Saati</Text>
+          <TouchableOpacity
+            onPress={() => setShowPicker(true)}
+            style={styles.timeTouchable}>
+            <Text style={styles.timeText}>
+              {alarmTime.toLocaleTimeString('tr-TR', {
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </Text>
+            <Text style={styles.tapToChange}>Değiştirmek için dokunun</Text>
+          </TouchableOpacity>
+          {showPicker && (
+            <DateTimePicker
+              value={alarmTime}
+              mode="time"
+              is24Hour={true}
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={onChangeTime}
+            />
+          )}
+        </View>
+
+        {/* 2. Akıllı Uyanma ve Pencere */}
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <View>
+              <Text style={styles.label}>Akıllı Uyanma (Smart Wake-Up)</Text>
+              <Text style={styles.hint}>Hafif uyku evresinde uyandırır</Text>
+            </View>
+            <Switch
+              value={isSmartAlarmActive}
+              onValueChange={val => {
+                setIsSmartAlarmActive(val);
+                saveSettings('isSmartAlarmActive', val);
+              }}
+              trackColor={{ false: '#334155', true: '#38bdf8' }}
+              thumbColor={isSmartAlarmActive ? '#0284c7' : '#94a3b8'}
+            />
+          </View>
+
+          {isSmartAlarmActive && (
+            <View style={styles.windowContainer}>
+              <Text style={styles.subLabel}>Uyanma Penceresi</Text>
+              <View style={styles.chipsRow}>
+                {WAKE_WINDOWS.map(mins => (
+                  <TouchableOpacity
+                    key={mins}
+                    style={[
+                      styles.chip,
+                      wakeWindow === mins && styles.chipActive,
+                    ]}
+                    onPress={() => {
+                      setWakeWindow(mins);
+                      saveSettings('wakeWindow', mins);
+                    }}>
+                    <Text
+                      style={[
+                        styles.chipText,
+                        wakeWindow === mins && styles.chipTextActive,
+                      ]}>
+                      {mins} dk önce
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* 3. Alarm Sesi Seçimi */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Alarm Sesi</Text>
+          <View style={styles.chipsRow}>
+            {SOUND_OPTIONS.map(sound => (
+              <TouchableOpacity
+                key={sound}
+                style={[
+                  styles.chip,
+                  selectedSound === sound && styles.chipActive,
+                ]}
+                onPress={() => {
+                  setSelectedSound(sound);
+                  saveSettings('selectedSound', sound);
+                }}>
+                <Text
+                  style={[
+                    styles.chipText,
+                    selectedSound === sound && styles.chipTextActive,
+                  ]}>
+                  {sound}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        {/* ÇIKIŞ YAP BUTONU */}
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <Text style={styles.logoutText}>Hesaptan Çıkış Yap</Text>
+        </TouchableOpacity>
+
+        <View style={{ height: 40 }} />
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeContainer: {
+    flex: 1,
+    backgroundColor: '#0f172a',
+  },
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
-    padding: 16,
+    paddingHorizontal: 16,
+  },
+  scrollContent: {
+    paddingTop: 12,
   },
   headerRow: {
     flexDirection: 'row',
@@ -311,18 +332,19 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: 'bold',
   },
-  signOutButton: {
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
+  logoutButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
     borderColor: '#ef4444',
-    padding: 14,
+    padding: 15,
     borderRadius: 12,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 10,
+    marginBottom: 10,
   },
-  signOutButtonText: {
+  logoutText: {
     color: '#ef4444',
+    fontSize: 16,
     fontWeight: 'bold',
-    fontSize: 15,
   },
 });
