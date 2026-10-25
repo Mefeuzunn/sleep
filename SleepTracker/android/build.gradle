@@ -19,3 +19,16 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    // Gradle 9+ jcenter() deprecation uyumluluğu
+    configurations.all {
+        resolutionStrategy.dependencySubstitution {
+            // jcenter yerine mavenCentral
+        }
+    }
+}
