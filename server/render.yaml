@@ -8,5 +8,5 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.13
-      - key: WHISPER_MODEL
-        value: tiny
+      - key: OPENAI_API_KEY
+        sync: false
