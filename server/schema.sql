@@ -1,33 +1,52 @@
--- Sleep Events tablosu (Ses olayları kaydı)
+-- 1. UUID Uzantısı
 create extension if not exists "uuid-ossp";
 
+-- 2. Sleep Events Tablosu (Ses Olayları)
 create table if not exists sleep_events (
   id uuid default uuid_generate_v4() primary key,
-  session_id text, -- O geceki uykuyu gruplamak için (örneğin tarih: "2026-10-25")
-  event_type text, -- 'snore', 'speech', 'cough'
-  transcript text, -- Eğer speech ise konuşma metni
+  user_id uuid references auth.users(id) on delete cascade default auth.uid(),
+  session_id text, -- O geceki uyku seansı (örn: "2026-10-25")
+  event_type text not null, -- 'snore', 'speech', 'cough'
+  transcript text, -- Whisper konuşma metni
   confidence numeric,
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- Hareket Verileri Tablosu (İvmeölçer hareket yoğunluğu)
+-- Eğer tablo önceden oluşturulmuşsa ve user_id yoksa ekle:
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_name='sleep_events' and column_name='user_id') then
+    alter table sleep_events add column user_id uuid references auth.users(id) on delete cascade default auth.uid();
+  end if;
+end $$;
+
+-- 3. Sleep Movements Tablosu (İvmeölçer Hareket Verileri)
 create table if not exists sleep_movements (
   id uuid default uuid_generate_v4() primary key,
-  session_id text, -- O geceki uyku oturumu
-  intensity numeric, -- Yerçekiminden arındırılmış net hareket şiddeti (|sqrt(x²+y²+z²) - 9.81|)
+  user_id uuid references auth.users(id) on delete cascade default auth.uid(),
+  session_id text,
+  intensity numeric,
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- RLS Güvenlik Politikaları
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_name='sleep_movements' and column_name='user_id') then
+    alter table sleep_movements add column user_id uuid references auth.users(id) on delete cascade default auth.uid();
+  end if;
+end $$;
+
+-- 4. Row Level Security (RLS) Aktifleştir
 alter table sleep_events enable row level security;
 alter table sleep_movements enable row level security;
 
-create policy "Allow public read sleep_events" on sleep_events for select using (true);
-create policy "Allow public insert sleep_events" on sleep_events for insert with check (true);
-create policy "Allow public update sleep_events" on sleep_events for update using (true);
-create policy "Allow public delete sleep_events" on sleep_events for delete using (true);
+-- 5. RLS Politikaları (Kullanıcılar sadece kendi verilerini okuyup yazabilir)
+drop policy if exists "Sadece kendi verilerini görebilir" on sleep_events;
+create policy "Sadece kendi verilerini görebilir" on sleep_events
+  for all using (auth.uid() = user_id or user_id is null)
+  with check (auth.uid() = user_id or user_id is null);
 
-create policy "Allow public read sleep_movements" on sleep_movements for select using (true);
-create policy "Allow public insert sleep_movements" on sleep_movements for insert with check (true);
-create policy "Allow public update sleep_movements" on sleep_movements for update using (true);
-create policy "Allow public delete sleep_movements" on sleep_movements for delete using (true);
+drop policy if exists "Sadece kendi hareketlerini görebilir" on sleep_movements;
+create policy "Sadece kendi hareketlerini görebilir" on sleep_movements
+  for all using (auth.uid() = user_id or user_id is null)
+  with check (auth.uid() = user_id or user_id is null);

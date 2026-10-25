@@ -7,11 +7,13 @@ import {
   Switch,
   Platform,
   SafeAreaView,
+  Alert,
 } from 'react-native';
 import DateTimePicker, {
   DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../supabase';
 
 const WAKE_WINDOWS = [15, 30, 45];
 const SOUND_OPTIONS = ['Kuş Sesleri', 'Orman', 'Klasik Alarm'];
@@ -182,6 +184,24 @@ export default function SettingsScreen({
           ))}
         </View>
       </View>
+
+      {/* 4. Oturumu Kapat Butonu */}
+      <TouchableOpacity
+        style={styles.signOutButton}
+        onPress={() => {
+          Alert.alert('Çıkış Yap', 'Oturumunuzu kapatmak istediğinize emin misiniz?', [
+            { text: 'İptal', style: 'cancel' },
+            {
+              text: 'Çıkış Yap',
+              style: 'destructive',
+              onPress: async () => {
+                await supabase.auth.signOut();
+              },
+            },
+          ]);
+        }}>
+        <Text style={styles.signOutButtonText}>🚪 Oturumu Kapat</Text>
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -290,5 +310,19 @@ const styles = StyleSheet.create({
   chipTextActive: {
     color: '#ffffff',
     fontWeight: 'bold',
+  },
+  signOutButton: {
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    padding: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  signOutButtonText: {
+    color: '#ef4444',
+    fontWeight: 'bold',
+    fontSize: 15,
   },
 });
