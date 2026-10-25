@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   SafeAreaView,
   Text,
@@ -24,14 +24,13 @@ import {
   SensorTypes,
 } from 'react-native-sensors';
 import Sound from 'react-native-sound';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from './supabase';
 import SleepReportScreen from './SleepReportScreen';
 import AlarmScreen from './AlarmScreen';
+import SettingsScreen from './SettingsScreen';
 
-// react-native-sound ses kategorisi ayarı
 Sound.setCategory('Playback', true);
-
-// Sensör okuma sıklığı: 1000 ms (1 saniye)
 setUpdateIntervalForType(SensorTypes.accelerometer, 1000);
 
 const SAMPLE_RATE = 16000;
@@ -85,7 +84,7 @@ interface AnalysisResult {
 }
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState<'tracker' | 'report'>('tracker');
+  const [currentScreen, setCurrentScreen] = useState<'tracker' | 'report' | 'settings'>('tracker');
   const [serverUrl, setServerUrl] = useState('http://10.0.2.2:8000');
   const [dbLevel, setDbLevel] = useState(0);
   const [isListening, setIsListening] = useState(false);
@@ -94,11 +93,12 @@ export default function App() {
   const [lastMovementIntensity, setLastMovementIntensity] = useState(0);
   const [analysisLogs, setAnalysisLogs] = useState<AnalysisResult[]>([]);
 
-  // Akıllı Alarm State'leri
+  // Akıllı Alarm State'leri (AsyncStorage senkronizasyonu)
   const [isAlarmEnabled, setIsAlarmEnabled] = useState(true);
   const [alarmHour, setAlarmHour] = useState('07');
   const [alarmMinute, setAlarmMinute] = useState('30');
   const [wakeWindowMinutes, setWakeWindowMinutes] = useState('30');
+  const [selectedSoundName, setSelectedSoundName] = useState('Kuş Sesleri');
   const [isAlarmRinging, setIsAlarmRinging] = useState(false);
 
   // Referanslar
@@ -127,6 +127,37 @@ export default function App() {
   const audioChunksRef = useRef<Buffer[]>([]);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // AsyncStorage Ayarlarını Yükleme
+  const loadSavedSettings = useCallback(async () => {
+    try {
+      const savedTime = await AsyncStorage.getItem('alarmTime');
+      const savedWindow = await AsyncStorage.getItem('wakeWindow');
+      const savedSound = await AsyncStorage.getItem('selectedSound');
+      const savedStatus = await AsyncStorage.getItem('isSmartAlarmActive');
+
+      if (savedTime) {
+        const d = new Date(savedTime);
+        setAlarmHour(String(d.getHours()).padStart(2, '0'));
+        setAlarmMinute(String(d.getMinutes()).padStart(2, '0'));
+      }
+      if (savedWindow) {
+        setWakeWindowMinutes(savedWindow);
+      }
+      if (savedSound) {
+        setSelectedSoundName(savedSound);
+      }
+      if (savedStatus) {
+        setIsAlarmEnabled(JSON.parse(savedStatus));
+      }
+    } catch (e) {
+      console.warn('AsyncStorage ayarları okunamadı:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSavedSettings();
+  }, [loadSavedSettings]);
+
   // Alarm Sesini Hazırlama
   useEffect(() => {
     alarmSoundRef.current = new Sound('alarm_ringtone.mp3', Sound.MAIN_BUNDLE, error => {
@@ -142,12 +173,11 @@ export default function App() {
     };
   }, []);
 
-  // Alarmı Tetikleme (Full Screen Modal Açılır)
+  // Alarmı Tetikleme
   const triggerAlarm = (reason: 'smart' | 'mandatory') => {
     if (alarmTriggeredRef.current) return;
     alarmTriggeredRef.current = true;
 
-    // Telefonun ekranını aç, kilit ekranını baypas et ve uygulamayı en öne getir
     if (Platform.OS === 'android' && NativeModules.WakeUp) {
       try {
         NativeModules.WakeUp.bringToFront();
@@ -157,7 +187,6 @@ export default function App() {
     }
 
     setIsAlarmRinging(true);
-
     console.log(
       reason === 'smart'
         ? '💡 Hafif uyku evresi yakalandı! Akıllı alarm çalıyor!'
@@ -170,21 +199,15 @@ export default function App() {
     }
   };
 
-  // Alarmı Uzun Basarak Kapatma ve Uyku Raporuna Geçiş
   const handleStopAlarm = async () => {
     if (alarmSoundRef.current) {
       alarmSoundRef.current.stop();
     }
     setIsAlarmRinging(false);
-
-    // Arka plan takibini ve dinlemeyi durdur
     await stopTracker();
-
-    // Kullanıcıyı doğrudan uykusunu görebileceği Gece Raporu ekranına yönlendir
     setCurrentScreen('report');
   };
 
-  // 10 Dakika Erteleme Mantığı
   const handleSnooze = (minutes: number = 10) => {
     if (alarmSoundRef.current) {
       alarmSoundRef.current.stop();
@@ -192,7 +215,6 @@ export default function App() {
     setIsAlarmRinging(false);
     alarmTriggeredRef.current = false;
 
-    // Hedef dakikayı 10 dakika ileri al
     const currentM = alarmMinuteRef.current;
     const newTotalMinutes = alarmHourRef.current * 60 + currentM + minutes;
     const newH = Math.floor(newTotalMinutes / 60) % 24;
@@ -431,75 +453,67 @@ export default function App() {
     return <SleepReportScreen onBack={() => setCurrentScreen('tracker')} />;
   }
 
+  if (currentScreen === 'settings') {
+    return (
+      <SettingsScreen
+        onBack={() => {
+          loadSavedSettings();
+          setCurrentScreen('tracker');
+        }}
+        onSettingsSaved={loadSavedSettings}
+      />
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
         <Text style={styles.title}>SleepTracker AI</Text>
-        <TouchableOpacity
-          style={styles.reportNavButton}
-          onPress={() => setCurrentScreen('report')}>
-          <Text style={styles.reportNavButtonText}>📊 Gece Raporu</Text>
-        </TouchableOpacity>
+        <View style={styles.topBarButtons}>
+          <TouchableOpacity
+            style={styles.settingsNavButton}
+            onPress={() => setCurrentScreen('settings')}>
+            <Text style={styles.settingsNavButtonText}>⚙️ Ayarlar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.reportNavButton}
+            onPress={() => setCurrentScreen('report')}>
+            <Text style={styles.reportNavButtonText}>📊 Rapor</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Akıllı Alarm Ayar Kartı */}
+      {/* Akıllı Alarm Özet Kartı */}
       <View style={styles.alarmCard}>
         <View style={styles.alarmHeaderRow}>
-          <Text style={styles.alarmCardTitle}>⏰ Akıllı Alarm (Smart Wake-Up)</Text>
+          <Text style={styles.alarmCardTitle}>⏰ Akıllı Alarm</Text>
           <Switch
             value={isAlarmEnabled}
-            onValueChange={setIsAlarmEnabled}
+            onValueChange={async val => {
+              setIsAlarmEnabled(val);
+              await AsyncStorage.setItem('isSmartAlarmActive', JSON.stringify(val));
+            }}
             trackColor={{ false: '#334155', true: '#38bdf8' }}
             thumbColor={isAlarmEnabled ? '#0284c7' : '#94a3b8'}
           />
         </View>
 
-        <View style={styles.alarmInputRow}>
-          <View style={styles.timeGroup}>
-            <Text style={styles.inputLabel}>Hedef Saat</Text>
-            <View style={styles.timeInputs}>
-              <TextInput
-                style={styles.timeInput}
-                value={alarmHour}
-                onChangeText={setAlarmHour}
-                keyboardType="numeric"
-                maxLength={2}
-                placeholder="07"
-                placeholderTextColor="#64748b"
-              />
-              <Text style={styles.colon}>:</Text>
-              <TextInput
-                style={styles.timeInput}
-                value={alarmMinute}
-                onChangeText={setAlarmMinute}
-                keyboardType="numeric"
-                maxLength={2}
-                placeholder="30"
-                placeholderTextColor="#64748b"
-              />
-            </View>
+        <TouchableOpacity
+          style={styles.alarmTouchableSummary}
+          onPress={() => setCurrentScreen('settings')}>
+          <View style={styles.alarmSummaryLeft}>
+            <Text style={styles.alarmTimeBig}>
+              {alarmHour}:{alarmMinute}
+            </Text>
+            <Text style={styles.alarmSoundLabel}>🎵 {selectedSoundName}</Text>
           </View>
-
-          <View style={styles.windowGroup}>
-            <Text style={styles.inputLabel}>Uyanma Penceresi</Text>
-            <View style={styles.windowInputWrap}>
-              <TextInput
-                style={styles.windowInput}
-                value={wakeWindowMinutes}
-                onChangeText={setWakeWindowMinutes}
-                keyboardType="numeric"
-                maxLength={2}
-                placeholder="30"
-                placeholderTextColor="#64748b"
-              />
-              <Text style={styles.windowUnit}>dk önce</Text>
-            </View>
+          <View style={styles.alarmSummaryRight}>
+            <Text style={styles.alarmWindowBadge}>
+              {wakeWindowMinutes} dk pencere
+            </Text>
+            <Text style={styles.editAlarmText}>Değiştir ›</Text>
           </View>
-        </View>
-
-        <Text style={styles.alarmHint}>
-          💡 {alarmHour}:{alarmMinute}'den {wakeWindowMinutes} dakika önce ilk hafif uyku hareketinde çalar.
-        </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Sunucu URL Ayarı */}
@@ -586,7 +600,7 @@ export default function App() {
         </ScrollView>
       </View>
 
-      {/* Full-Screen Alarm Modal Ekranı (Uzun Basmalı & Titreşimli) */}
+      {/* Full-Screen Alarm Modal Ekranı */}
       <AlarmScreen
         isRinging={isAlarmRinging}
         onStopAlarm={handleStopAlarm}
@@ -611,15 +625,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 8,
   },
+  topBarButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   title: {
     fontSize: 22,
     fontWeight: 'bold',
     color: '#f8fafc',
   },
+  settingsNavButton: {
+    backgroundColor: '#1e293b',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  settingsNavButtonText: {
+    color: '#cbd5e1',
+    fontWeight: '600',
+    fontSize: 12,
+  },
   reportNavButton: {
     backgroundColor: '#3b82f6',
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     borderRadius: 8,
   },
   reportNavButtonText: {
@@ -648,72 +679,44 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#38bdf8',
   },
-  alarmInputRow: {
+  alarmTouchableSummary: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    paddingTop: 4,
   },
-  timeGroup: {
-    alignItems: 'center',
+  alarmSummaryLeft: {
+    flexDirection: 'column',
   },
-  inputLabel: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginBottom: 4,
-  },
-  timeInputs: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  timeInput: {
-    backgroundColor: '#0f172a',
-    color: '#f8fafc',
-    borderRadius: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    fontSize: 16,
+  alarmTimeBig: {
+    fontSize: 32,
     fontWeight: 'bold',
-    textAlign: 'center',
-    width: 44,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  colon: {
     color: '#f8fafc',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginHorizontal: 4,
+    letterSpacing: 1,
   },
-  windowGroup: {
-    alignItems: 'center',
-  },
-  windowInputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  windowInput: {
-    backgroundColor: '#0f172a',
-    color: '#f8fafc',
-    borderRadius: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    width: 44,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  windowUnit: {
+  alarmSoundLabel: {
     color: '#94a3b8',
     fontSize: 12,
-    marginLeft: 6,
+    marginTop: 2,
   },
-  alarmHint: {
-    color: '#64748b',
-    fontSize: 10,
-    marginTop: 4,
+  alarmSummaryRight: {
+    alignItems: 'flex-end',
+  },
+  alarmWindowBadge: {
+    backgroundColor: '#0369a1',
+    color: '#e0f2fe',
+    fontSize: 11,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    fontWeight: '600',
+    overflow: 'hidden',
+  },
+  editAlarmText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    marginTop: 6,
+    fontWeight: '500',
   },
   serverBox: {
     width: '100%',
