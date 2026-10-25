@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production & Build
+build/
+dist/
+*.pyc
+__pycache__/
+venv/
+.env
+
+# Mobile Build Artifacts
+SleepTracker/android/app/build/
+SleepTracker/android/.gradle/
+SleepTracker/ios/Pods/
+SleepTracker/ios/build/
+
+# OS Files
+.DS_Store
+Thumbs.db
