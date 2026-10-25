@@ -9,9 +9,9 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
-import { supabase } from './supabase';
-import HypnogramChart, { HypnogramDataPoint } from './HypnogramChart';
-import { processSleepData, RawMovement, RawAudioEvent } from './sleepProcessor';
+import { supabase } from '../supabase';
+import HypnogramChart, { HypnogramDataPoint } from '../HypnogramChart';
+import { processSleepData, RawMovement, RawAudioEvent } from '../sleepProcessor';
 
 interface SleepReportScreenProps {
   onBack?: () => void;
