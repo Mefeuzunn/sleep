@@ -265,17 +265,20 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
           setMovementCount(prev => prev + 1);
 
           const todaySession = new Date().toISOString().split('T')[0];
-          supabase
-            .from('sleep_movements')
-            .insert([
-              {
-                session_id: todaySession,
-                intensity: Number(netMovement.toFixed(2)),
-              },
-            ])
-            .then(({ error }) => {
-              if (error) console.warn('Hareket kaydı uyarısı:', error.message);
-            });
+          supabase.auth.getUser().then(({ data: { user } }) => {
+            supabase
+              .from('sleep_movements')
+              .insert([
+                {
+                  user_id: user?.id,
+                  session_id: todaySession,
+                  intensity: Number(netMovement.toFixed(2)),
+                },
+              ])
+              .then(({ error }) => {
+                if (error) console.warn('Hareket kaydı uyarısı:', error.message);
+              });
+          });
         }
       });
     } catch (err) {
@@ -311,15 +314,36 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
       setAnalysisLogs(prev => [newResult, ...prev.slice(0, 9)]);
 
       if (type !== 'noise' && type !== 'unknown') {
-        const todaySession = new Date().toISOString().split('T')[0];
-        await supabase.from('sleep_events').insert([
-          {
-            session_id: todaySession,
-            event_type: type,
-            transcript: text || null,
-            confidence: confidence || null,
-          },
-        ]);
+        try {
+          // 1. Aktif kullanıcının güvenli oturum bilgisini (UUID) al
+          const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+          if (userError || !user) {
+            console.error('Kullanıcı bulunamadı, oturum düşmüş olabilir:', userError);
+            return;
+          }
+
+          const todaySession = new Date().toISOString().split('T')[0]; // Örn: 2026-10-25
+
+          // 2. user_id alanını ekleyerek kaydı gerçekleştir
+          const { error: insertError } = await supabase.from('sleep_events').insert([
+            {
+              user_id: user.id, // RLS politikasını geçmek için zorunlu alan
+              session_id: todaySession,
+              event_type: type,
+              transcript: text || null,
+              confidence: confidence || null,
+            },
+          ]);
+
+          if (insertError) {
+            console.error('Supabase RLS veya kayıt hatası:', insertError.message);
+          } else {
+            console.log('Olay kullanıcının hesabına başarıyla kaydedildi:', type);
+          }
+        } catch (err) {
+          console.error('Veritabanı işlemi sırasında beklenmeyen hata:', err);
+        }
       }
     } catch (error) {
       console.error('Yapay zekaya gönderim hatası:', error);
