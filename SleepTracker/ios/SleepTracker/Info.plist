@@ -36,11 +36,12 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Uyku takibi için mikrofona ihtiyacımız var.</string>
+	<string>Uyku evrelerinizi analiz etmek için horlama ve nefes seslerinizi dinler.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
 		<string>processing</string>
+		<string>fetch</string>
 	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>

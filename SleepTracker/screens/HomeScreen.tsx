@@ -25,6 +25,7 @@ import {
 } from 'react-native-sensors';
 import Sound from 'react-native-sound';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
 import { supabase } from '../supabase';
 import AlarmScreen from '../AlarmScreen';
 
@@ -184,6 +185,23 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         NativeModules.WakeUp.bringToFront();
       } catch (wakeErr) {
         console.warn('WakeUp native modül hatası:', wakeErr);
+      }
+    } else if (Platform.OS === 'ios') {
+      // iOS Kilit Ekranı için Time-Sensitive / Full Screen Alert bildirimi
+      try {
+        notifee.requestPermission();
+        notifee.displayNotification({
+          title: reason === 'smart' ? '🌅 Günaydın! (Hafif Uyku Yakalandı)' : '⏰ Alarm Saati!',
+          body: 'Uyanmak ve gecenizi incelemek için dokunun.',
+          ios: {
+            critical: true,
+            criticalVolume: 1.0,
+            sound: 'default',
+            interruptionLevel: 'timeSensitive',
+          },
+        });
+      } catch (iosNotifErr) {
+        console.warn('iOS Bildirim hatası:', iosNotifErr);
       }
     }
 
