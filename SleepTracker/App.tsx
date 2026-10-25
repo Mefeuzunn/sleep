@@ -11,7 +11,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
-  Alert,
 } from 'react-native';
 import LiveAudioStream from 'react-native-live-audio-stream';
 import BackgroundJob from 'react-native-background-actions';
@@ -26,8 +25,9 @@ import {
 import Sound from 'react-native-sound';
 import { supabase } from './supabase';
 import SleepReportScreen from './SleepReportScreen';
+import AlarmScreen from './AlarmScreen';
 
-// react-native-sound ses kategorisi ayarı (sessiz modda bile çalsın)
+// react-native-sound ses kategorisi ayarı
 Sound.setCategory('Playback', true);
 
 // Sensör okuma sıklığı: 1000 ms (1 saniye)
@@ -128,10 +128,9 @@ export default function App() {
 
   // Alarm Sesini Hazırlama
   useEffect(() => {
-    // Projede alarm_ringtone.mp3 veya sistem default zil sesi kullanılabilir
     alarmSoundRef.current = new Sound('alarm_ringtone.mp3', Sound.MAIN_BUNDLE, error => {
       if (error) {
-        console.log('Özel alarm sesi bulunamadı, fallback yapılandırılıyor:', error);
+        console.log('Özel alarm sesi yüklenemedi:', error);
       }
     });
 
@@ -142,7 +141,7 @@ export default function App() {
     };
   }, []);
 
-  // Alarmı Tetikleme
+  // Alarmı Tetikleme (Full Screen Modal Açılır)
   const triggerAlarm = (reason: 'smart' | 'mandatory') => {
     if (alarmTriggeredRef.current) return;
     alarmTriggeredRef.current = true;
@@ -155,35 +154,45 @@ export default function App() {
     );
 
     if (alarmSoundRef.current) {
-      alarmSoundRef.current.setNumberOfLoops(-1); // Kapatılana kadar tekrar et
-      alarmSoundRef.current.play(success => {
-        if (!success) {
-          console.log('Ses çalma başarısız oldu');
-        }
-      });
+      alarmSoundRef.current.setNumberOfLoops(-1);
+      alarmSoundRef.current.play();
     }
-
-    Alert.alert(
-      reason === 'smart' ? '🌅 Günaydın! (Akıllı Uyanış)' : '⏰ Alarm Saati!',
-      reason === 'smart'
-        ? 'Hafif uyku evresindeyken uyandınız, sersemlik hissetmeyeceksiniz.'
-        : 'Hedeflenen uyanma saatine ulaşıldı.',
-      [{ text: 'Alarmı Kapat', onPress: dismissAlarm }],
-      { cancelable: false },
-    );
   };
 
-  // Alarmı ve Takibi Kapatma
-  const dismissAlarm = async () => {
+  // Alarmı Uzun Basarak Kapatma ve Uyku Raporuna Geçiş
+  const handleStopAlarm = async () => {
     if (alarmSoundRef.current) {
       alarmSoundRef.current.stop();
     }
     setIsAlarmRinging(false);
+
+    // Arka plan takibini ve dinlemeyi durdur
     await stopTracker();
-    console.log('Alarm kapatıldı, uyku takibi sonlandırıldı.');
+
+    // Kullanıcıyı doğrudan uykusunu görebileceği Gece Raporu ekranına yönlendir
+    setCurrentScreen('report');
   };
 
-  // İvmeölçer Sensör Dinleyicisi & Akıllı Alarm Zaman Kontrolü
+  // 10 Dakika Erteleme Mantığı
+  const handleSnooze = (minutes: number = 10) => {
+    if (alarmSoundRef.current) {
+      alarmSoundRef.current.stop();
+    }
+    setIsAlarmRinging(false);
+    alarmTriggeredRef.current = false;
+
+    // Hedef dakikayı 10 dakika ileri al
+    const currentM = alarmMinuteRef.current;
+    const newTotalMinutes = alarmHourRef.current * 60 + currentM + minutes;
+    const newH = Math.floor(newTotalMinutes / 60) % 24;
+    const newMin = newTotalMinutes % 60;
+
+    setAlarmHour(String(newH).padStart(2, '0'));
+    setAlarmMinute(String(newMin).padStart(2, '0'));
+    console.log(`Alarm ${minutes} dakika ertelendi: ${newH}:${newMin}`);
+  };
+
+  // İvmeölçer & Akıllı Alarm Zaman Kontrolü
   useEffect(() => {
     let subscription: { unsubscribe: () => void } | null = null;
 
@@ -191,11 +200,10 @@ export default function App() {
       subscription = accelerometer.subscribe(({ x, y, z }) => {
         if (!isListeningRef.current) return;
 
-        // Vektörel net hareket büyüklüğü: |sqrt(x² + y² + z²) - 9.81|
         const totalForce = Math.sqrt(x * x + y * y + z * z);
         const netMovement = Math.abs(totalForce - 9.81);
 
-        // 1. Akıllı Alarm Kontrolü
+        // Akıllı Alarm Kontrolü
         if (isAlarmEnabledRef.current && !alarmTriggeredRef.current) {
           const now = new Date();
           const currentHour = now.getHours();
@@ -207,21 +215,21 @@ export default function App() {
           const windowStart = targetTimeInMinutes - wakeWindowRef.current;
           const windowEnd = targetTimeInMinutes;
 
-          // DURUM 1: Uyanma penceresindeyiz ve hareket algılandı (Hafif Uyku)
+          // DURUM 1: Uyanma penceresinde hareket algılandı (Hafif Uyku)
           if (currentTimeInMinutes >= windowStart && currentTimeInMinutes < windowEnd) {
             if (netMovement > MOVEMENT_THRESHOLD) {
               triggerAlarm('smart');
               return;
             }
           }
-          // DURUM 2: Pencere süresi doldu, mecburi alarm saati
+          // DURUM 2: Mecburi alarm saati
           else if (currentTimeInMinutes >= windowEnd) {
             triggerAlarm('mandatory');
             return;
           }
         }
 
-        // 2. Yatak Dönüş Hareketi Kaydı
+        // Yatak Hareketi Kaydı
         if (netMovement > MOVEMENT_THRESHOLD) {
           setLastMovementIntensity(netMovement);
           setMovementCount(prev => prev + 1);
@@ -241,7 +249,7 @@ export default function App() {
         }
       });
     } catch (err) {
-      console.warn('İvmeölçer hatası:', err);
+      console.warn('İvmeölçer dinleme hatası:', err);
     }
 
     return () => {
@@ -423,16 +431,6 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Alarm Çalma Bildirimi (Banner) */}
-      {isAlarmRinging && (
-        <View style={styles.alarmBanner}>
-          <Text style={styles.alarmBannerText}>⏰ ALARM ÇALIYOR! GÜNAYDIN ☀️</Text>
-          <TouchableOpacity style={styles.dismissButton} onPress={dismissAlarm}>
-            <Text style={styles.dismissButtonText}>Alarmı Durdur</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       {/* Akıllı Alarm Ayar Kartı */}
       <View style={styles.alarmCard}>
         <View style={styles.alarmHeaderRow}>
@@ -576,6 +574,13 @@ export default function App() {
           )}
         </ScrollView>
       </View>
+
+      {/* Full-Screen Alarm Modal Ekranı (Uzun Basmalı & Titreşimli) */}
+      <AlarmScreen
+        isRinging={isAlarmRinging}
+        onStopAlarm={handleStopAlarm}
+        onSnooze={handleSnooze}
+      />
     </SafeAreaView>
   );
 }
@@ -610,32 +615,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '600',
     fontSize: 12,
-  },
-  alarmBanner: {
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: '#dc2626',
-    padding: 12,
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  alarmBannerText: {
-    color: '#ffffff',
-    fontWeight: 'bold',
-    fontSize: 14,
-    marginBottom: 8,
-  },
-  dismissButton: {
-    backgroundColor: '#ffffff',
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-    borderRadius: 6,
-  },
-  dismissButtonText: {
-    color: '#dc2626',
-    fontWeight: 'bold',
-    fontSize: 13,
   },
   alarmCard: {
     width: '100%',
