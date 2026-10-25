@@ -11,6 +11,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
+  NativeModules,
 } from 'react-native';
 import LiveAudioStream from 'react-native-live-audio-stream';
 import BackgroundJob from 'react-native-background-actions';
@@ -145,6 +146,16 @@ export default function App() {
   const triggerAlarm = (reason: 'smart' | 'mandatory') => {
     if (alarmTriggeredRef.current) return;
     alarmTriggeredRef.current = true;
+
+    // Telefonun ekranını aç, kilit ekranını baypas et ve uygulamayı en öne getir
+    if (Platform.OS === 'android' && NativeModules.WakeUp) {
+      try {
+        NativeModules.WakeUp.bringToFront();
+      } catch (wakeErr) {
+        console.warn('WakeUp native modül hatası:', wakeErr);
+      }
+    }
+
     setIsAlarmRinging(true);
 
     console.log(
