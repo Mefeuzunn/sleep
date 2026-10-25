@@ -3,6 +3,7 @@ import { StatusBar, ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Session } from '@supabase/supabase-js';
+import BootSplash from 'react-native-bootsplash';
 import { supabase } from './supabase';
 
 import AuthScreen from './screens/AuthScreen';
@@ -17,18 +18,21 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Uygulama açıldığında mevcut oturumu kontrol et
+    // Uygulama açıldığında oturumu kontrol et
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
+
+      // Her şey hazır olduğunda açılış ekranını yumuşak bir geçişle gizle
+      BootSplash.hide({ fade: true });
     });
 
-    // Oturum değişikliklerini (Giriş/Çıkış) anlık dinle
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setLoading(false);
+      BootSplash.hide({ fade: true });
     });
 
     return () => subscription.unsubscribe();
