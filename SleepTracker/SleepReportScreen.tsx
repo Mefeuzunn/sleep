@@ -8,8 +8,10 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { supabase } from './supabase';
+import HypnogramChart, { HypnogramDataPoint } from './HypnogramChart';
 
 export interface SleepEvent {
   id: string;
@@ -17,6 +19,13 @@ export interface SleepEvent {
   event_type: 'snore' | 'speech' | 'cough' | string;
   transcript: string | null;
   confidence: number | null;
+  created_at: string;
+}
+
+export interface SleepMovement {
+  id: string;
+  session_id: string;
+  intensity: number;
   created_at: string;
 }
 
@@ -29,10 +38,88 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
   const [snoreCount, setSnoreCount] = useState(0);
   const [coughCount, setCoughCount] = useState(0);
   const [movementCount, setMovementCount] = useState(0);
+  const [hypnogramData, setHypnogramData] = useState<HypnogramDataPoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Hareket ve ses kombinasyonundan uyku evresi tahmini
+  // Hareket ve ses verilerini 30 dakikalık periyotlara (epoch) gruplayıp Y değerlerine dönüştürür:
+  // 0: Derin Uyku, 1: REM, 2: Hafif Uyku, 3: Uyanık
+  const buildHypnogram = (movements: SleepMovement[], events: SleepEvent[]) => {
+    if (movements.length === 0 && events.length === 0) {
+      return [];
+    }
+
+    // Zaman dilimi gruplaması (30 dakikalık slotlar)
+    const epochMap: {
+      [timeSlot: string]: {
+        movements: number;
+        hasSnore: boolean;
+        hasSpeech: boolean;
+      };
+    } = {};
+
+    movements.forEach(m => {
+      const date = new Date(m.created_at);
+      const minutes = date.getMinutes() < 30 ? '00' : '30';
+      const slot = `${String(date.getHours()).padStart(2, '0')}:${minutes}`;
+
+      if (!epochMap[slot]) {
+        epochMap[slot] = { movements: 0, hasSnore: false, hasSpeech: false };
+      }
+      epochMap[slot].movements += 1;
+    });
+
+    events.forEach(e => {
+      const date = new Date(e.created_at);
+      const minutes = date.getMinutes() < 30 ? '00' : '30';
+      const slot = `${String(date.getHours()).padStart(2, '0')}:${minutes}`;
+
+      if (!epochMap[slot]) {
+        epochMap[slot] = { movements: 0, hasSnore: false, hasSpeech: false };
+      }
+      if (e.event_type === 'snore') epochMap[slot].hasSnore = true;
+      if (e.event_type === 'speech') epochMap[slot].hasSpeech = true;
+    });
+
+    const sortedSlots = Object.keys(epochMap).sort();
+
+    return sortedSlots.map(slot => {
+      const { movements: moves, hasSnore, hasSpeech } = epochMap[slot];
+      let value = 0; // Derin uyku (varsayılan)
+
+      if (moves >= 5) {
+        value = 3; // Uyanık / Yüksek hareket
+      } else if (moves >= 2) {
+        value = 2; // Hafif uyku
+      } else if (moves === 1 || hasSnore || hasSpeech) {
+        value = 1; // REM (hafif hareket / atoni veya konuşma/horlama)
+      } else {
+        value = 0; // Derin uyku (sıfır hareket)
+      }
+
+      const point: HypnogramDataPoint = {
+        value,
+        label: slot,
+      };
+
+      if (hasSnore) {
+        point.showDataPoint = true;
+        point.dataPointColor = '#ef4444';
+        point.dataPointText = 'Horlama';
+        point.textColor = '#f87171';
+        point.textFontSize = 9;
+      } else if (hasSpeech) {
+        point.showDataPoint = true;
+        point.dataPointColor = '#f59e0b';
+        point.dataPointText = 'Konuşma';
+        point.textColor = '#fbbf24';
+        point.textFontSize = 9;
+      }
+
+      return point;
+    });
+  };
+
   const estimateSleepStage = () => {
     if (movementCount > 25) {
       return { stage: 'Hafif Uyku / Huzursuz', color: '#f59e0b', desc: 'Sık vücut dönüşleri ve hareketler kaydedildi.' };
@@ -40,7 +127,7 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
     if (movementCount < 6 && snoreCount < 5) {
       return { stage: 'Derin Uyku', color: '#10b981', desc: 'Vücut neredeyse tamamen hareketsiz ve dinlenme modunda.' };
     }
-    return { stage: 'REM / Dengeli Uyku', color: '#6366f1', desc: 'Kas tonusu düşük, rüya ve zihinsel onarım evresi.' };
+    return { stage: 'REM / Dengeli Uyku', color: '#6366f1', desc: 'Düşük kas aktivitesi, rüya ve zihinsel onarım evresi.' };
   };
 
   const fetchNightData = async () => {
@@ -53,27 +140,36 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
         .from('sleep_events')
         .select('*')
         .eq('session_id', todaySession)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
+      let loadedEvents: SleepEvent[] = [];
       if (eventError) {
         console.error('Supabase ses verisi çekme hatası:', eventError);
       } else if (eventData) {
+        loadedEvents = eventData;
         setSpeechEvents(eventData.filter((e: SleepEvent) => e.event_type === 'speech'));
         setSnoreCount(eventData.filter((e: SleepEvent) => e.event_type === 'snore').length);
         setCoughCount(eventData.filter((e: SleepEvent) => e.event_type === 'cough').length);
       }
 
       // 2. Hareket Verilerini Getir
-      const { count: moveCount, error: moveError } = await supabase
+      const { data: moveData, error: moveError } = await supabase
         .from('sleep_movements')
-        .select('*', { count: 'exact', head: true })
-        .eq('session_id', todaySession);
+        .select('*')
+        .eq('session_id', todaySession)
+        .order('created_at', { ascending: true });
 
+      let loadedMovements: SleepMovement[] = [];
       if (moveError) {
         console.warn('Supabase hareket verisi çekme uyarısı:', moveError.message);
-      } else if (moveCount !== null) {
-        setMovementCount(moveCount);
+      } else if (moveData) {
+        loadedMovements = moveData;
+        setMovementCount(moveData.length);
       }
+
+      // 3. Hipnogram Grafiği Verilerini Üret
+      const calculatedChart = buildHypnogram(loadedMovements, loadedEvents);
+      setHypnogramData(calculatedChart);
     } catch (err) {
       console.error('Rapor yüklenirken hata:', err);
     } finally {
@@ -104,57 +200,56 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
         <Text style={styles.title}>Gece Raporu</Text>
       </View>
 
-      {/* Uyku Evresi Tahmin Kartı */}
-      <View style={[styles.stageCard, { borderColor: currentSleepStage.color }]}>
-        <Text style={styles.stageTitle}>Tahmini Uyku Evresi:</Text>
-        <Text style={[styles.stageName, { color: currentSleepStage.color }]}>
-          {currentSleepStage.stage}
-        </Text>
-        <Text style={styles.stageDesc}>{currentSleepStage.desc}</Text>
-      </View>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 24 }}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#38bdf8"
+          />
+        }>
+        {/* Hipnogram Uyku Döngüsü Grafiği */}
+        <HypnogramChart data={hypnogramData} />
 
-      {/* İstatistik Kartları */}
-      <View style={styles.statsRow}>
-        <View style={[styles.statsCard, styles.movementCard]}>
-          <Text style={styles.statNumber}>{movementCount}</Text>
-          <Text style={styles.statLabel}>Hareket / Dönüş</Text>
+        {/* Uyku Evresi Tahmin Kartı */}
+        <View style={[styles.stageCard, { borderColor: currentSleepStage.color }]}>
+          <Text style={styles.stageTitle}>Genel Uyku Durumu:</Text>
+          <Text style={[styles.stageName, { color: currentSleepStage.color }]}>
+            {currentSleepStage.stage}
+          </Text>
+          <Text style={styles.stageDesc}>{currentSleepStage.desc}</Text>
         </View>
 
-        <View style={[styles.statsCard, styles.snoreCard]}>
-          <Text style={styles.statNumber}>{snoreCount}</Text>
-          <Text style={styles.statLabel}>Horlama</Text>
+        {/* İstatistik Kartları */}
+        <View style={styles.statsRow}>
+          <View style={[styles.statsCard, styles.movementCard]}>
+            <Text style={styles.statNumber}>{movementCount}</Text>
+            <Text style={styles.statLabel}>Dönüş / Hareket</Text>
+          </View>
+
+          <View style={[styles.statsCard, styles.snoreCard]}>
+            <Text style={styles.statNumber}>{snoreCount}</Text>
+            <Text style={styles.statLabel}>Horlama</Text>
+          </View>
+
+          <View style={[styles.statsCard, styles.coughCard]}>
+            <Text style={styles.statNumber}>{coughCount}</Text>
+            <Text style={styles.statLabel}>Öksürük</Text>
+          </View>
         </View>
 
-        <View style={[styles.statsCard, styles.coughCard]}>
-          <Text style={styles.statNumber}>{coughCount}</Text>
-          <Text style={styles.statLabel}>Öksürük</Text>
-        </View>
-      </View>
+        <Text style={styles.subtitle}>Uykuda Söyledikleriniz ({speechEvents.length}):</Text>
 
-      <Text style={styles.subtitle}>Uykuda Söyledikleriniz ({speechEvents.length}):</Text>
-
-      {loading && !refreshing ? (
-        <ActivityIndicator size="large" color="#38bdf8" style={{ marginTop: 40 }} />
-      ) : (
-        <FlatList
-          data={speechEvents}
-          keyExtractor={item => item.id}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor="#38bdf8"
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>
-                Bu gece kaydedilen konuşma bulunamadı.
-              </Text>
-            </View>
-          }
-          renderItem={({ item }) => (
-            <View style={styles.speechCard}>
+        {loading && !refreshing ? (
+          <ActivityIndicator size="large" color="#38bdf8" style={{ marginTop: 20 }} />
+        ) : speechEvents.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>Bu gece kaydedilen konuşma bulunamadı.</Text>
+          </View>
+        ) : (
+          speechEvents.map(item => (
+            <View key={item.id} style={styles.speechCard}>
               <View style={styles.cardHeader}>
                 <Text style={styles.time}>
                   {new Date(item.created_at).toLocaleTimeString('tr-TR')}
@@ -167,10 +262,9 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
               </View>
               <Text style={styles.transcript}>"{item.transcript || '(Metin yok)'}"</Text>
             </View>
-          )}
-          contentContainerStyle={{ paddingBottom: 20 }}
-        />
-      )}
+          ))
+        )}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -295,7 +389,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   emptyContainer: {
-    padding: 30,
+    padding: 24,
     alignItems: 'center',
   },
   emptyText: {
