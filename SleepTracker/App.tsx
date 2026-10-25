@@ -16,14 +16,23 @@ import BackgroundJob from 'react-native-background-actions';
 import RNFS from 'react-native-fs';
 import { Buffer } from 'buffer';
 import axios from 'axios';
+import {
+  accelerometer,
+  setUpdateIntervalForType,
+  SensorTypes,
+} from 'react-native-sensors';
 import { supabase } from './supabase';
 import SleepReportScreen from './SleepReportScreen';
+
+// Sensör okuma sıklığı: 1000 ms (1 saniye - pil dostu)
+setUpdateIntervalForType(SensorTypes.accelerometer, 1000);
 
 const SAMPLE_RATE = 16000;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
 const THRESHOLD_DB = 40;
 const SILENCE_DELAY_MS = 2000; // 2 saniye sessizlik olunca kaydı bitir
+const MOVEMENT_THRESHOLD = 0.5; // Yerçekiminden arındırılmış net hareket eşiği
 
 const options = {
   sampleRate: SAMPLE_RATE,
@@ -37,7 +46,7 @@ const options = {
 const bgOptions = {
   taskName: 'SleepTracker',
   taskTitle: 'Uyku Takibi Aktif',
-  taskDesc: 'Arka planda uyku sesleri analiz ediliyor...',
+  taskDesc: 'Arka planda uyku sesleri ve hareket analiz ediliyor...',
   taskIcon: { name: 'ic_launcher', type: 'mipmap' },
   color: '#6200ee',
   parameters: { delay: 1000 },
@@ -71,21 +80,75 @@ interface AnalysisResult {
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'tracker' | 'report'>('tracker');
-  const [serverUrl, setServerUrl] = useState('http://10.0.2.2:8000'); // Android emülatör varsayılanı (fiziksel cihaz için PC IP'si)
+  const [serverUrl, setServerUrl] = useState('http://10.0.2.2:8000');
   const [dbLevel, setDbLevel] = useState(0);
   const [isListening, setIsListening] = useState(false);
   const [isRecordingSound, setIsRecordingSound] = useState(false);
+  const [movementCount, setMovementCount] = useState(0);
+  const [lastMovementIntensity, setLastMovementIntensity] = useState(0);
   const [analysisLogs, setAnalysisLogs] = useState<AnalysisResult[]>([]);
 
   // Referanslar
   const serverUrlRef = useRef(serverUrl);
   serverUrlRef.current = serverUrl;
 
+  const isListeningRef = useRef(false);
+  isListeningRef.current = isListening;
+
   const isRecordingRef = useRef(false);
   const audioChunksRef = useRef<Buffer[]>([]);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Dosyayı oluşturup FastAPI sunucusuna gönderen ve ardından Supabase'e kaydedip yerel kopyayı silen fonksiyon
+  // İvmeölçer Sensör Dinleyicisi
+  useEffect(() => {
+    let subscription: { unsubscribe: () => void } | null = null;
+
+    try {
+      subscription = accelerometer.subscribe(({ x, y, z }) => {
+        // Sadece kullanıcı uyku takibini başlattığında hareketleri işle
+        if (!isListeningRef.current) return;
+
+        // Vektörel toplam büyüklük: sqrt(x² + y² + z²)
+        const totalForce = Math.sqrt(x * x + y * y + z * z);
+
+        // Yerçekimini çıkararak net hareketi bul (|toplam - 9.81|)
+        const netMovement = Math.abs(totalForce - 9.81);
+
+        if (netMovement > MOVEMENT_THRESHOLD) {
+          console.log('Yatakta hareket algılandı! Şiddet:', netMovement.toFixed(2));
+          setLastMovementIntensity(netMovement);
+          setMovementCount(prev => prev + 1);
+
+          // Hareketi Supabase'e asenkron kaydet (uyku evreleri analizi için)
+          const todaySession = new Date().toISOString().split('T')[0];
+          supabase
+            .from('sleep_movements')
+            .insert([
+              {
+                session_id: todaySession,
+                intensity: Number(netMovement.toFixed(2)),
+              },
+            ])
+            .then(({ error }) => {
+              if (error) {
+                // Tablo henüz açılmamışsa veya bağlantı yoksa logla
+                console.warn('Hareket kaydı uyarısı:', error.message);
+              }
+            });
+        }
+      });
+    } catch (err) {
+      console.warn('İvmeölçer başlatılamadı (Emülatörde sensör olmayabilir):', err);
+    }
+
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
+  }, []);
+
+  // Ses dosyasını FastAPI sunucusuna gönderen ve ardından Supabase'e kaydeden fonksiyon
   const sendToAI = async (filePath: string) => {
     try {
       const formData = new FormData();
@@ -113,9 +176,9 @@ export default function App() {
 
       setAnalysisLogs(prev => [newResult, ...prev.slice(0, 9)]);
 
-      // 3. Analiz Sonucunu Supabase Veritabanına Kaydetme
+      // Ses Olayını Supabase Veritabanına Kaydet
       if (type !== 'noise' && type !== 'unknown') {
-        const todaySession = new Date().toISOString().split('T')[0]; // Örn: 2026-10-25
+        const todaySession = new Date().toISOString().split('T')[0];
 
         const { error: dbError } = await supabase.from('sleep_events').insert([
           {
@@ -127,7 +190,7 @@ export default function App() {
         ]);
 
         if (dbError) {
-          console.error('Supabase kayıt hatası:', dbError);
+          console.error('Supabase ses kayıt hatası:', dbError);
         } else {
           console.log('Olay Supabase veritabanına kaydedildi:', type);
         }
@@ -135,12 +198,12 @@ export default function App() {
     } catch (error) {
       console.error('Yapay zekaya gönderim hatası:', error);
     } finally {
-      // Mahremiyet ve depolama optimizasyonu: Cihazdaki geçici .wav dosyasını hemen sil
+      // Mahremiyet ve depolama optimizasyonu: Cihazdaki geçici .wav dosyasını anında sil
       try {
         const fileExists = await RNFS.exists(filePath);
         if (fileExists) {
           await RNFS.unlink(filePath);
-          console.log('Yerel dosya temizlendi:', filePath);
+          console.log('Yerel ses dosyası temizlendi:', filePath);
         }
       } catch (cleanupErr) {
         console.error('Yerel dosya silinirken hata:', cleanupErr);
@@ -148,7 +211,7 @@ export default function App() {
     }
   };
 
-  // Sessizlik sayacı dolunca RAM'deki chunk'ları WAV dosyasına döküp sunucuya iletir
+  // Sessizlik sayacı dolunca RAM'deki chunk'ları WAV dosyasına döküp sunucuya yollar
   const finalizeRecording = async () => {
     try {
       const chunks = audioChunksRef.current;
@@ -297,15 +360,36 @@ export default function App() {
         />
       </View>
 
-      {/* Ses & Durum Kartı */}
+      {/* Ses & Hareket Durum Kartı */}
       <View style={styles.card}>
-        <Text style={styles.dbText}>
-          Anlık Ses: <Text style={styles.dbValue}>{dbLevel.toFixed(1)} dB</Text>
-        </Text>
-        <Text
-          style={[styles.statusBadge, isListening ? styles.activeBadge : styles.inactiveBadge]}>
-          {isListening ? 'Mikrofon Dinleniyor' : 'Dinleme Kapalı'}
-        </Text>
+        <View style={styles.sensorRow}>
+          <View style={styles.sensorItem}>
+            <Text style={styles.sensorLabel}>Anlık Ses</Text>
+            <Text style={styles.sensorValue}>{dbLevel.toFixed(1)} dB</Text>
+          </View>
+          <View style={styles.sensorDivider} />
+          <View style={styles.sensorItem}>
+            <Text style={styles.sensorLabel}>Yatak Hareketi</Text>
+            <Text style={styles.movementValue}>{movementCount} kez</Text>
+          </View>
+        </View>
+
+        {lastMovementIntensity > 0 && isListening && (
+          <Text style={styles.movementHint}>
+            Son Hareket Şiddeti: {lastMovementIntensity.toFixed(2)} m/s²
+          </Text>
+        )}
+
+        <View style={styles.badgeContainer}>
+          <Text
+            style={[
+              styles.statusBadge,
+              isListening ? styles.activeBadge : styles.inactiveBadge,
+            ]}>
+            {isListening ? 'Mikrofon & İvmeölçer Aktif' : 'Takip Kapalı'}
+          </Text>
+        </View>
+
         {isRecordingSound && (
           <Text style={styles.recordingText}>🔴 Eşik aşıldı! RAM'de kaydediliyor...</Text>
         )}
@@ -413,14 +497,44 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     marginBottom: 12,
   },
-  dbText: {
-    fontSize: 20,
-    color: '#94a3b8',
-    marginBottom: 8,
+  sensorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginBottom: 10,
   },
-  dbValue: {
+  sensorItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  sensorLabel: {
+    color: '#94a3b8',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  sensorValue: {
+    fontSize: 22,
     fontWeight: 'bold',
     color: '#38bdf8',
+  },
+  movementValue: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#f59e0b',
+  },
+  movementHint: {
+    color: '#fbbf24',
+    fontSize: 11,
+    marginBottom: 8,
+  },
+  sensorDivider: {
+    width: 1,
+    height: 35,
+    backgroundColor: '#334155',
+  },
+  badgeContainer: {
+    marginTop: 4,
   },
   statusBadge: {
     fontSize: 13,

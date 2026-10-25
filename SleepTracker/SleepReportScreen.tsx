@@ -28,29 +28,54 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
   const [speechEvents, setSpeechEvents] = useState<SleepEvent[]>([]);
   const [snoreCount, setSnoreCount] = useState(0);
   const [coughCount, setCoughCount] = useState(0);
+  const [movementCount, setMovementCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Hareket ve ses kombinasyonundan uyku evresi tahmini
+  const estimateSleepStage = () => {
+    if (movementCount > 25) {
+      return { stage: 'Hafif Uyku / Huzursuz', color: '#f59e0b', desc: 'Sık vücut dönüşleri ve hareketler kaydedildi.' };
+    }
+    if (movementCount < 6 && snoreCount < 5) {
+      return { stage: 'Derin Uyku', color: '#10b981', desc: 'Vücut neredeyse tamamen hareketsiz ve dinlenme modunda.' };
+    }
+    return { stage: 'REM / Dengeli Uyku', color: '#6366f1', desc: 'Kas tonusu düşük, rüya ve zihinsel onarım evresi.' };
+  };
 
   const fetchNightData = async () => {
     setLoading(true);
     try {
       const todaySession = new Date().toISOString().split('T')[0];
 
-      const { data, error } = await supabase
+      // 1. Ses Olaylarını Getir
+      const { data: eventData, error: eventError } = await supabase
         .from('sleep_events')
         .select('*')
         .eq('session_id', todaySession)
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.error('Supabase veri çekme hatası:', error);
-      } else if (data) {
-        setSpeechEvents(data.filter((e: SleepEvent) => e.event_type === 'speech'));
-        setSnoreCount(data.filter((e: SleepEvent) => e.event_type === 'snore').length);
-        setCoughCount(data.filter((e: SleepEvent) => e.event_type === 'cough').length);
+      if (eventError) {
+        console.error('Supabase ses verisi çekme hatası:', eventError);
+      } else if (eventData) {
+        setSpeechEvents(eventData.filter((e: SleepEvent) => e.event_type === 'speech'));
+        setSnoreCount(eventData.filter((e: SleepEvent) => e.event_type === 'snore').length);
+        setCoughCount(eventData.filter((e: SleepEvent) => e.event_type === 'cough').length);
+      }
+
+      // 2. Hareket Verilerini Getir
+      const { count: moveCount, error: moveError } = await supabase
+        .from('sleep_movements')
+        .select('*', { count: 'exact', head: true })
+        .eq('session_id', todaySession);
+
+      if (moveError) {
+        console.warn('Supabase hareket verisi çekme uyarısı:', moveError.message);
+      } else if (moveCount !== null) {
+        setMovementCount(moveCount);
       }
     } catch (err) {
-      console.error('Rapor getirilirken hata:', err);
+      console.error('Rapor yüklenirken hata:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -66,6 +91,8 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
     fetchNightData();
   };
 
+  const currentSleepStage = estimateSleepStage();
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -77,8 +104,22 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
         <Text style={styles.title}>Gece Raporu</Text>
       </View>
 
+      {/* Uyku Evresi Tahmin Kartı */}
+      <View style={[styles.stageCard, { borderColor: currentSleepStage.color }]}>
+        <Text style={styles.stageTitle}>Tahmini Uyku Evresi:</Text>
+        <Text style={[styles.stageName, { color: currentSleepStage.color }]}>
+          {currentSleepStage.stage}
+        </Text>
+        <Text style={styles.stageDesc}>{currentSleepStage.desc}</Text>
+      </View>
+
       {/* İstatistik Kartları */}
       <View style={styles.statsRow}>
+        <View style={[styles.statsCard, styles.movementCard]}>
+          <Text style={styles.statNumber}>{movementCount}</Text>
+          <Text style={styles.statLabel}>Hareket / Dönüş</Text>
+        </View>
+
         <View style={[styles.statsCard, styles.snoreCard]}>
           <Text style={styles.statNumber}>{snoreCount}</Text>
           <Text style={styles.statLabel}>Horlama</Text>
@@ -88,14 +129,9 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
           <Text style={styles.statNumber}>{coughCount}</Text>
           <Text style={styles.statLabel}>Öksürük</Text>
         </View>
-
-        <View style={[styles.statsCard, styles.speechSummaryCard]}>
-          <Text style={styles.statNumber}>{speechEvents.length}</Text>
-          <Text style={styles.statLabel}>Konuşma</Text>
-        </View>
       </View>
 
-      <Text style={styles.subtitle}>Uykuda Söyledikleriniz:</Text>
+      <Text style={styles.subtitle}>Uykuda Söyledikleriniz ({speechEvents.length}):</Text>
 
       {loading && !refreshing ? (
         <ActivityIndicator size="large" color="#38bdf8" style={{ marginTop: 40 }} />
@@ -167,6 +203,29 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#f8fafc',
   },
+  stageCard: {
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1.5,
+  },
+  stageTitle: {
+    fontSize: 12,
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  stageName: {
+    fontSize: 19,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  stageDesc: {
+    fontSize: 12,
+    color: '#cbd5e1',
+  },
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -176,31 +235,32 @@ const styles = StyleSheet.create({
   statsCard: {
     flex: 1,
     paddingVertical: 14,
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     borderRadius: 12,
     alignItems: 'center',
+  },
+  movementCard: {
+    backgroundColor: '#78350f',
   },
   snoreCard: {
     backgroundColor: '#7f1d1d',
   },
   coughCard: {
-    backgroundColor: '#78350f',
-  },
-  speechSummaryCard: {
-    backgroundColor: '#1e3a8a',
+    backgroundColor: '#374151',
   },
   statNumber: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#ffffff',
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#cbd5e1',
     marginTop: 4,
+    textAlign: 'center',
   },
   subtitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: '#e2e8f0',
     marginBottom: 12,
