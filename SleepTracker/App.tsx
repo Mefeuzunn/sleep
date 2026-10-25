@@ -9,12 +9,15 @@ import {
   View,
   TextInput,
   ScrollView,
+  TouchableOpacity,
 } from 'react-native';
 import LiveAudioStream from 'react-native-live-audio-stream';
 import BackgroundJob from 'react-native-background-actions';
 import RNFS from 'react-native-fs';
 import { Buffer } from 'buffer';
 import axios from 'axios';
+import { supabase } from './supabase';
+import SleepReportScreen from './SleepReportScreen';
 
 const SAMPLE_RATE = 16000;
 const CHANNELS = 1;
@@ -67,6 +70,7 @@ interface AnalysisResult {
 }
 
 export default function App() {
+  const [currentScreen, setCurrentScreen] = useState<'tracker' | 'report'>('tracker');
   const [serverUrl, setServerUrl] = useState('http://10.0.2.2:8000'); // Android emülatör varsayılanı (fiziksel cihaz için PC IP'si)
   const [dbLevel, setDbLevel] = useState(0);
   const [isListening, setIsListening] = useState(false);
@@ -81,7 +85,7 @@ export default function App() {
   const audioChunksRef = useRef<Buffer[]>([]);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Dosyayı oluşturup FastAPI sunucusuna gönderen ve ardından yerel kopyayı silen fonksiyon
+  // Dosyayı oluşturup FastAPI sunucusuna gönderen ve ardından Supabase'e kaydedip yerel kopyayı silen fonksiyon
   const sendToAI = async (filePath: string) => {
     try {
       const formData = new FormData();
@@ -98,14 +102,36 @@ export default function App() {
       });
 
       console.log('Yapay Zeka Sonucu:', response.data);
+      const { type, confidence, text } = response.data;
+
       const newResult: AnalysisResult = {
-        type: response.data?.type || 'Bilinmiyor',
-        confidence: response.data?.confidence,
-        text: response.data?.text,
+        type: type || 'Bilinmiyor',
+        confidence: confidence,
+        text: text,
         timestamp: new Date().toLocaleTimeString(),
       };
 
       setAnalysisLogs(prev => [newResult, ...prev.slice(0, 9)]);
+
+      // 3. Analiz Sonucunu Supabase Veritabanına Kaydetme
+      if (type !== 'noise' && type !== 'unknown') {
+        const todaySession = new Date().toISOString().split('T')[0]; // Örn: 2026-10-25
+
+        const { error: dbError } = await supabase.from('sleep_events').insert([
+          {
+            session_id: todaySession,
+            event_type: type,
+            transcript: text || null,
+            confidence: confidence || null,
+          },
+        ]);
+
+        if (dbError) {
+          console.error('Supabase kayıt hatası:', dbError);
+        } else {
+          console.log('Olay Supabase veritabanına kaydedildi:', type);
+        }
+      }
     } catch (error) {
       console.error('Yapay zekaya gönderim hatası:', error);
     } finally {
@@ -114,7 +140,7 @@ export default function App() {
         const fileExists = await RNFS.exists(filePath);
         if (fileExists) {
           await RNFS.unlink(filePath);
-          console.log('Yerel dosya gizlilik ve hafıza optimizasyonu için temizlendi:', filePath);
+          console.log('Yerel dosya temizlendi:', filePath);
         }
       } catch (cleanupErr) {
         console.error('Yerel dosya silinirken hata:', cleanupErr);
@@ -122,7 +148,7 @@ export default function App() {
     }
   };
 
-  // Sessizlik sayacı dolunca RAM'deki chunk'ları WAV dosyasına döküp sunucuya yollar
+  // Sessizlik sayacı dolunca RAM'deki chunk'ları WAV dosyasına döküp sunucuya iletir
   const finalizeRecording = async () => {
     try {
       const chunks = audioChunksRef.current;
@@ -140,7 +166,6 @@ export default function App() {
       await RNFS.writeFile(filePath, completeWav.toString('base64'), 'base64');
       console.log('Kayıt bitti, sunucuya iletiliyor:', filePath);
 
-      // Sunucuya gönder ve ardından yerel dosyayı sil
       await sendToAI(filePath);
     } catch (err) {
       console.error('Kayıt sonlandırma hatası:', err);
@@ -243,9 +268,20 @@ export default function App() {
     setIsListening(false);
   };
 
+  if (currentScreen === 'report') {
+    return <SleepReportScreen onBack={() => setCurrentScreen('tracker')} />;
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>SleepTracker AI</Text>
+      <View style={styles.topBar}>
+        <Text style={styles.title}>SleepTracker AI</Text>
+        <TouchableOpacity
+          style={styles.reportNavButton}
+          onPress={() => setCurrentScreen('report')}>
+          <Text style={styles.reportNavButtonText}>📊 Gece Raporu</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Sunucu URL Ayarı */}
       <View style={styles.serverBox}>
@@ -285,7 +321,7 @@ export default function App() {
 
       {/* Yapay Zeka Sonuçları */}
       <View style={styles.logContainer}>
-        <Text style={styles.logHeader}>Yapay Zeka Analiz Geçmişi</Text>
+        <Text style={styles.logHeader}>Canlı Analiz Akışı</Text>
         <ScrollView style={styles.logScroll}>
           {analysisLogs.length === 0 ? (
             <Text style={styles.emptyText}>Henüz bir ses analizi yapılmadı.</Text>
@@ -320,11 +356,29 @@ const styles = StyleSheet.create({
     padding: 16,
     alignItems: 'center',
   },
+  topBar: {
+    width: '100%',
+    maxWidth: 360,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 12,
+  },
   title: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#f8fafc',
-    marginVertical: 12,
+  },
+  reportNavButton: {
+    backgroundColor: '#3b82f6',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  reportNavButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
+    fontSize: 13,
   },
   serverBox: {
     width: '100%',
