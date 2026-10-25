@@ -176,46 +176,54 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
   }, []);
 
   // Alarm Tetikleme
-  const triggerAlarm = (reason: 'smart' | 'mandatory') => {
+  const triggerAlarm = async (reason: 'smart' | 'mandatory') => {
     if (alarmTriggeredRef.current) return;
     alarmTriggeredRef.current = true;
 
-    if (Platform.OS === 'android' && NativeModules.WakeUp) {
-      try {
-        NativeModules.WakeUp.bringToFront();
-      } catch (wakeErr) {
-        console.warn('WakeUp native modül hatası:', wakeErr);
+    if (Platform.OS === 'android') {
+      if (NativeModules.WakeUp) {
+        try {
+          NativeModules.WakeUp.bringToFront();
+        } catch (wakeErr) {
+          console.warn('WakeUp native modül hatası:', wakeErr);
+        }
       }
-    } else if (Platform.OS === 'ios') {
-      // iOS Kilit Ekranı için Time-Sensitive / Full Screen Alert bildirimi
+      setIsAlarmRinging(true);
+      if (alarmSoundRef.current) {
+        alarmSoundRef.current.setNumberOfLoops(-1);
+        alarmSoundRef.current.play();
+      }
+    } else {
+      // iOS Kilit Ekranı için Time-Sensitive / Rahatsız Etme modunu aşan bildirim
       try {
-        notifee.requestPermission();
-        notifee.displayNotification({
-          title: reason === 'smart' ? '🌅 Günaydın! (Hafif Uyku Yakalandı)' : '⏰ Alarm Saati!',
-          body: 'Uyanmak ve gecenizi incelemek için dokunun.',
+        await notifee.requestPermission();
+        await notifee.displayNotification({
+          title: reason === 'smart' ? '⏰ Günaydın Müge!' : '⏰ Alarm Saati!',
+          body: 'Hafif uyku evrenizde uyandırıldınız. Raporunuzu görmek için dokunun.',
           ios: {
+            sound: 'alarm_ringtone.wav',
+            interruptionLevel: 'timeSensitive',
             critical: true,
             criticalVolume: 1.0,
-            sound: 'default',
-            interruptionLevel: 'timeSensitive',
+            foregroundPresentationOptions: {
+              badge: true,
+              sound: true,
+              banner: true,
+              list: true,
+            },
           },
         });
       } catch (iosNotifErr) {
         console.warn('iOS Bildirim hatası:', iosNotifErr);
       }
+      setIsAlarmRinging(true);
     }
 
-    setIsAlarmRinging(true);
     console.log(
       reason === 'smart'
         ? '💡 Hafif uyku evresi yakalandı! Akıllı alarm çalıyor!'
         : '⏰ Son saat geldi! Mecburi alarm çalıyor!',
     );
-
-    if (alarmSoundRef.current) {
-      alarmSoundRef.current.setNumberOfLoops(-1);
-      alarmSoundRef.current.play();
-    }
   };
 
   const handleStopAlarm = async () => {

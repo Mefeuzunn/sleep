@@ -4,12 +4,39 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Session } from '@supabase/supabase-js';
 import BootSplash from 'react-native-bootsplash';
+import notifee, { EventType } from '@notifee/react-native';
+import LiveAudioStream from 'react-native-live-audio-stream';
+import BackgroundJob from 'react-native-background-actions';
 import { supabase } from './supabase';
+import { navigationRef, navigate } from './RootNavigation';
 
 import AuthScreen from './screens/AuthScreen';
 import HomeScreen from './screens/HomeScreen';
 import ReportScreen from './screens/ReportScreen';
 import SettingsScreen from './screens/SettingsScreen';
+
+// Notifee Arka Plan Olayı Dinleyicisi (iOS Kilit Ekranı Bildirime Tıklama)
+notifee.onBackgroundEvent(async ({ type, detail }) => {
+  if (type === EventType.PRESS) {
+    console.log('Kullanıcı iOS alarm bildirimine tıkladı ve uyandı!', detail.notification);
+
+    // 1. Dinleme servislerini durdur
+    try {
+      LiveAudioStream.stop();
+      await BackgroundJob.stop();
+    } catch (e) {
+      console.warn('Arka plan servisi durdurma uyarısı:', e);
+    }
+
+    // 2. Bildirimi ekrandan temizle
+    if (detail.notification?.id) {
+      await notifee.cancelNotification(detail.notification.id);
+    }
+
+    // 3. Kullanıcıyı doğrudan Gece Raporu ekranına yönlendir
+    navigate('Report');
+  }
+});
 
 const Tab = createBottomTabNavigator();
 
@@ -18,12 +45,23 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Uygulama açıldığında oturumu kontrol et
+    // 1. Bildirim izinlerini iste
+    notifee.requestPermission();
+
+    // 2. Ön plandayken bildirime tıklama dinleyicisi
+    const unsubscribeForeground = notifee.onForegroundEvent(async ({ type, detail }) => {
+      if (type === EventType.PRESS) {
+        if (detail.notification?.id) {
+          await notifee.cancelNotification(detail.notification.id);
+        }
+        navigate('Report');
+      }
+    });
+
+    // 3. Supabase Oturum Kontrolü
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
-
-      // Her şey hazır olduğunda açılış ekranını yumuşak bir geçişle gizle
       BootSplash.hide({ fade: true });
     });
 
@@ -35,7 +73,10 @@ export default function App() {
       BootSplash.hide({ fade: true });
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      unsubscribeForeground();
+      subscription.unsubscribe();
+    };
   }, []);
 
   if (loading) {
@@ -52,7 +93,7 @@ export default function App() {
     );
   }
 
-  // Kullanıcı giriş yapmadıysa sadece Auth ekranını göster
+  // Kullanıcı giriş yapmadıysa Auth ekranı
   if (!session) {
     return (
       <>
@@ -62,9 +103,9 @@ export default function App() {
     );
   }
 
-  // Giriş yapıldıysa ana uygulamayı göster
+  // Giriş yapıldıysa ana uygulama
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <StatusBar barStyle="light-content" />
       <Tab.Navigator
         screenOptions={{
