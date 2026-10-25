@@ -1,4 +1,5 @@
 import UIKit
+import RNBootSplash
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
