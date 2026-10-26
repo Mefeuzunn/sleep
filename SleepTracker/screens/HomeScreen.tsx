@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   SafeAreaView,
   Text,
-  Button,
   PermissionsAndroid,
   Platform,
   StyleSheet,
@@ -25,9 +24,12 @@ import {
 } from 'react-native-sensors';
 import Sound from 'react-native-sound';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import notifee, { AndroidImportance, EventType } from '@notifee/react-native';
+import notifee from '@notifee/react-native';
 import { supabase } from '../supabase';
 import AlarmScreen from '../AlarmScreen';
+import { Colors } from '../theme';
+import { PlayIcon, StopIcon } from '../components/Icons';
+import LivePulseVisualizer from '../components/LivePulseVisualizer';
 
 Sound.setCategory('Playback', true);
 setUpdateIntervalForType(SensorTypes.accelerometer, 1000);
@@ -53,7 +55,7 @@ const bgOptions = {
   taskTitle: 'Uyku Takibi & Akıllı Alarm Aktif',
   taskDesc: 'Uyanma penceresi ve uyku sesleri izleniyor...',
   taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-  color: '#6200ee',
+  color: Colors.primary,
   parameters: { delay: 1000 },
 };
 
@@ -95,7 +97,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
   const [lastMovementIntensity, setLastMovementIntensity] = useState(0);
   const [analysisLogs, setAnalysisLogs] = useState<AnalysisResult[]>([]);
 
-  // Akıllı Alarm State'leri
+  // Akıllı Alarm
   const [isAlarmEnabled, setIsAlarmEnabled] = useState(true);
   const [alarmHour, setAlarmHour] = useState('07');
   const [alarmMinute, setAlarmMinute] = useState('30');
@@ -129,7 +131,6 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
   const audioChunksRef = useRef<Buffer[]>([]);
   const silenceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // AsyncStorage Ayarlarını Yükleme
   const loadSavedSettings = useCallback(async () => {
     try {
       const savedTime = await AsyncStorage.getItem('alarmTime');
@@ -142,15 +143,9 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         setAlarmHour(String(d.getHours()).padStart(2, '0'));
         setAlarmMinute(String(d.getMinutes()).padStart(2, '0'));
       }
-      if (savedWindow) {
-        setWakeWindowMinutes(savedWindow);
-      }
-      if (savedSound) {
-        setSelectedSoundName(savedSound);
-      }
-      if (savedStatus) {
-        setIsAlarmEnabled(JSON.parse(savedStatus));
-      }
+      if (savedWindow) setWakeWindowMinutes(savedWindow);
+      if (savedSound) setSelectedSoundName(savedSound);
+      if (savedStatus) setIsAlarmEnabled(JSON.parse(savedStatus));
     } catch (e) {
       console.warn('AsyncStorage ayarları okunamadı:', e);
     }
@@ -160,22 +155,16 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     loadSavedSettings();
   }, [loadSavedSettings]);
 
-  // Alarm Sesi
   useEffect(() => {
     alarmSoundRef.current = new Sound('alarm_ringtone.mp3', Sound.MAIN_BUNDLE, error => {
-      if (error) {
-        console.log('Özel alarm sesi yüklenemedi:', error);
-      }
+      if (error) console.log('Özel alarm sesi yüklenemedi:', error);
     });
 
     return () => {
-      if (alarmSoundRef.current) {
-        alarmSoundRef.current.release();
-      }
+      if (alarmSoundRef.current) alarmSoundRef.current.release();
     };
   }, []);
 
-  // Alarm Tetikleme
   const triggerAlarm = async (reason: 'smart' | 'mandatory') => {
     if (alarmTriggeredRef.current) return;
     alarmTriggeredRef.current = true;
@@ -194,7 +183,6 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         alarmSoundRef.current.play();
       }
     } else {
-      // iOS Kilit Ekranı için Time-Sensitive / Rahatsız Etme modunu aşan bildirim
       try {
         await notifee.requestPermission();
         await notifee.displayNotification({
@@ -218,29 +206,17 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
       }
       setIsAlarmRinging(true);
     }
-
-    console.log(
-      reason === 'smart'
-        ? '💡 Hafif uyku evresi yakalandı! Akıllı alarm çalıyor!'
-        : '⏰ Son saat geldi! Mecburi alarm çalıyor!',
-    );
   };
 
   const handleStopAlarm = async () => {
-    if (alarmSoundRef.current) {
-      alarmSoundRef.current.stop();
-    }
+    if (alarmSoundRef.current) alarmSoundRef.current.stop();
     setIsAlarmRinging(false);
     await stopTracker();
-    if (navigation) {
-      navigation.navigate('Report');
-    }
+    if (navigation) navigation.navigate('Report');
   };
 
   const handleSnooze = (minutes: number = 10) => {
-    if (alarmSoundRef.current) {
-      alarmSoundRef.current.stop();
-    }
+    if (alarmSoundRef.current) alarmSoundRef.current.stop();
     setIsAlarmRinging(false);
     alarmTriggeredRef.current = false;
 
@@ -253,7 +229,6 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
     setAlarmMinute(String(newMin).padStart(2, '0'));
   };
 
-  // İvmeölçer & Akıllı Alarm Zaman Kontrolü
   useEffect(() => {
     let subscription: { unsubscribe: () => void } | null = null;
 
@@ -341,44 +316,31 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
 
       if (type !== 'noise' && type !== 'unknown') {
         try {
-          // 1. Aktif kullanıcının güvenli oturum bilgisini (UUID) al
-          const { data: { user }, error: userError } = await supabase.auth.getUser();
-
-          if (userError || !user) {
-            console.error('Kullanıcı bulunamadı, oturum düşmüş olabilir:', userError);
-            return;
-          }
-
-          const todaySession = new Date().toISOString().split('T')[0]; // Örn: 2026-10-25
-
-          // 2. user_id alanını ekleyerek kaydı gerçekleştir
-          const { error: insertError } = await supabase.from('sleep_events').insert([
-            {
-              user_id: user.id, // RLS politikasını geçmek için zorunlu alan
-              session_id: todaySession,
-              event_type: type,
-              transcript: text || null,
-              confidence: confidence || null,
-            },
-          ]);
-
-          if (insertError) {
-            console.error('Supabase RLS veya kayıt hatası:', insertError.message);
-          } else {
-            console.log('Olay kullanıcının hesabına başarıyla kaydedildi:', type);
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const todaySession = new Date().toISOString().split('T')[0];
+            await supabase.from('sleep_events').insert([
+              {
+                user_id: user.id,
+                session_id: todaySession,
+                event_type: type,
+                transcript: text || null,
+                confidence: confidence || null,
+              },
+            ]);
           }
         } catch (err) {
-          console.error('Veritabanı işlemi sırasında beklenmeyen hata:', err);
+          console.error('Kayıt hatası:', err);
         }
       }
     } catch (error) {
-      console.error('Yapay zekaya gönderim hatası:', error);
+      console.error('Yapay zeka analiz hatası:', error);
     } finally {
       try {
         const fileExists = await RNFS.exists(filePath);
         if (fileExists) await RNFS.unlink(filePath);
       } catch (cleanupErr) {
-        console.error('Yerel dosya temizleme hatası:', cleanupErr);
+        console.error('Temizleme hatası:', cleanupErr);
       }
     }
   };
@@ -498,124 +460,126 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Akıllı Alarm Özet Kartı */}
-      <View style={styles.alarmCard}>
-        <View style={styles.alarmHeaderRow}>
-          <Text style={styles.alarmCardTitle}>⏰ Akıllı Alarm</Text>
-          <Switch
-            value={isAlarmEnabled}
-            onValueChange={async val => {
-              setIsAlarmEnabled(val);
-              await AsyncStorage.setItem('isSmartAlarmActive', JSON.stringify(val));
-            }}
-            trackColor={{ false: '#334155', true: '#38bdf8' }}
-            thumbColor={isAlarmEnabled ? '#0284c7' : '#94a3b8'}
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {/* Canlı Nabız / Dalga Görselleştirici */}
+        <View style={styles.heroSection}>
+          <LivePulseVisualizer isListening={isListening} dbLevel={dbLevel} />
+          <Text style={styles.heroStatusText}>
+            {isListening ? 'UYKU İZLENİYOR' : 'TAKİP DURDURULDU'}
+          </Text>
+          <Text style={styles.heroSubText}>
+            {isListening
+              ? `${dbLevel.toFixed(1)} dB • ${movementCount} dönüş algılandı`
+              : 'Seansı başlatmak için aşağıdaki butona dokunun'}
+          </Text>
+        </View>
+
+        {/* Ana Eylem Butonu (44px+ dokunmatik hedef) */}
+        <TouchableOpacity
+          style={[styles.mainActionButton, isListening ? styles.stopActionButton : styles.startActionButton]}
+          onPress={isListening ? stopTracker : startTracker}
+          activeOpacity={0.85}>
+          {isListening ? (
+            <>
+              <StopIcon size={20} color="#FFFFFF" />
+              <Text style={styles.actionButtonText}>Seansı Sonlandır</Text>
+            </>
+          ) : (
+            <>
+              <PlayIcon size={20} color="#FFFFFF" />
+              <Text style={styles.actionButtonText}>Uykuyu Başlat</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        {/* Akıllı Alarm Özet Kartı */}
+        <View style={styles.glassCard}>
+          <View style={styles.alarmHeaderRow}>
+            <Text style={styles.cardHeaderTitle}>⏰ AKILLI UYANMA</Text>
+            <Switch
+              value={isAlarmEnabled}
+              onValueChange={async val => {
+                setIsAlarmEnabled(val);
+                await AsyncStorage.setItem('isSmartAlarmActive', JSON.stringify(val));
+              }}
+              trackColor={{ false: '#334155', true: Colors.primary }}
+              thumbColor={isAlarmEnabled ? Colors.primaryLight : '#94A3B8'}
+            />
+          </View>
+
+          <TouchableOpacity
+            style={styles.alarmSummaryBody}
+            onPress={() => navigation?.navigate('Settings')}
+            activeOpacity={0.7}>
+            <View>
+              <Text style={styles.alarmTimeDisplay}>
+                {alarmHour}:{alarmMinute}
+              </Text>
+              <Text style={styles.alarmSubDetail}>
+                {wakeWindowMinutes} dk uyanma penceresi • 🎵 {selectedSoundName}
+              </Text>
+            </View>
+            <View style={styles.editPill}>
+              <Text style={styles.editPillText}>Düzenle</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Canlı Biyometrik Sensör Kartı */}
+        <View style={styles.glassCard}>
+          <Text style={styles.cardHeaderTitle}>BİYOMETRİK VERİ AKIŞI</Text>
+          <View style={styles.metricsRow}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>Ses Seviyesi</Text>
+              <Text style={[styles.metricValue, { color: Colors.accent }]}>{dbLevel.toFixed(1)} dB</Text>
+            </View>
+            <View style={styles.metricDivider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>Yatak Hareketi</Text>
+              <Text style={[styles.metricValue, { color: Colors.awake }]}>{movementCount}</Text>
+            </View>
+            <View style={styles.metricDivider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricLabel}>Son Şiddet</Text>
+              <Text style={[styles.metricValue, { color: Colors.remSleep }]}>{lastMovementIntensity.toFixed(1)}</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* FastAPI Bulut Uç Noktası */}
+        <View style={styles.serverCard}>
+          <Text style={styles.serverCardLabel}>Yapay Zeka Sunucusu:</Text>
+          <TextInput
+            style={styles.serverInput}
+            value={serverUrl}
+            onChangeText={setServerUrl}
+            placeholder="https://sleep-api.onrender.com"
+            placeholderTextColor={Colors.textMuted}
+            autoCapitalize="none"
+            autoCorrect={false}
           />
         </View>
 
-        <TouchableOpacity
-          style={styles.alarmTouchableSummary}
-          onPress={() => navigation?.navigate('Settings')}>
-          <View style={styles.alarmSummaryLeft}>
-            <Text style={styles.alarmTimeBig}>
-              {alarmHour}:{alarmMinute}
-            </Text>
-            <Text style={styles.alarmSoundLabel}>🎵 {selectedSoundName}</Text>
-          </View>
-          <View style={styles.alarmSummaryRight}>
-            <Text style={styles.alarmWindowBadge}>
-              {wakeWindowMinutes} dk pencere
-            </Text>
-            <Text style={styles.editAlarmText}>Ayarları Düzenle ›</Text>
-          </View>
-        </TouchableOpacity>
-      </View>
-
-      {/* Sunucu URL Ayarı */}
-      <View style={styles.serverBox}>
-        <Text style={styles.serverLabel}>FastAPI Sunucu URL:</Text>
-        <TextInput
-          style={styles.serverInput}
-          value={serverUrl}
-          onChangeText={setServerUrl}
-          placeholder="http://192.168.1.XX:8000"
-          placeholderTextColor="#64748b"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      </View>
-
-      {/* Ses & Hareket Durum Kartı */}
-      <View style={styles.card}>
-        <View style={styles.sensorRow}>
-          <View style={styles.sensorItem}>
-            <Text style={styles.sensorLabel}>Anlık Ses</Text>
-            <Text style={styles.sensorValue}>{dbLevel.toFixed(1)} dB</Text>
-          </View>
-          <View style={styles.sensorDivider} />
-          <View style={styles.sensorItem}>
-            <Text style={styles.sensorLabel}>Yatak Hareketi</Text>
-            <Text style={styles.movementValue}>{movementCount} kez</Text>
-          </View>
-        </View>
-
-        {lastMovementIntensity > 0 && isListening && (
-          <Text style={styles.movementHint}>
-            Son Hareket Şiddeti: {lastMovementIntensity.toFixed(2)} m/s²
-          </Text>
-        )}
-
-        <View style={styles.badgeContainer}>
-          <Text
-            style={[
-              styles.statusBadge,
-              isListening ? styles.activeBadge : styles.inactiveBadge,
-            ]}>
-            {isListening ? 'Mikrofon & İvmeölçer Aktif' : 'Takip Kapalı'}
-          </Text>
-        </View>
-
-        {isRecordingSound && (
-          <Text style={styles.recordingText}>🔴 Eşik aşıldı! RAM'de kaydediliyor...</Text>
-        )}
-      </View>
-
-      <View style={styles.buttonWrapper}>
-        <Button
-          title={isListening ? 'Takibi Durdur' : 'Uyku Takibini Başlat'}
-          color={isListening ? '#ef4444' : '#10b981'}
-          onPress={isListening ? stopTracker : startTracker}
-        />
-      </View>
-
-      {/* Canlı Yapay Zeka Akışı */}
-      <View style={styles.logContainer}>
-        <Text style={styles.logHeader}>Canlı Analiz Akışı</Text>
-        <ScrollView style={styles.logScroll}>
-          {analysisLogs.length === 0 ? (
-            <Text style={styles.emptyText}>Henüz bir ses analizi yapılmadı.</Text>
-          ) : (
-            analysisLogs.map((log, index) => (
-              <View key={index} style={styles.logItem}>
-                <View style={styles.logRow}>
-                  <Text style={styles.logType}>🔊 {log.type.toUpperCase()}</Text>
-                  <Text style={styles.logTime}>{log.timestamp}</Text>
-                </View>
-                {log.confidence !== undefined && (
-                  <Text style={styles.logDetail}>
-                    Güven Oranı: %{(log.confidence * 100).toFixed(1)}
+        {/* Canlı Analiz Kayıtları */}
+        {analysisLogs.length > 0 && (
+          <View style={styles.glassCard}>
+            <Text style={styles.cardHeaderTitle}>TESPİT EDİLEN SESLER</Text>
+            {analysisLogs.slice(0, 3).map((log, idx) => (
+              <View key={idx} style={styles.logItemRow}>
+                <View style={styles.logItemLeft}>
+                  <Text style={styles.logItemType}>
+                    {log.type === 'snore' ? '🔴 Horlama' : log.type === 'speech' ? '🟡 Konuşma' : log.type === 'cough' ? '🟠 Öksürük' : '⚪ Ses'}
                   </Text>
-                )}
-                {log.text ? (
-                  <Text style={styles.logText}>Metin: "{log.text}"</Text>
-                ) : null}
+                  {log.text ? <Text style={styles.logItemText}>"{log.text}"</Text> : null}
+                </View>
+                <Text style={styles.logItemTime}>{log.timestamp}</Text>
               </View>
-            ))
-          )}
-        </ScrollView>
-      </View>
+            ))}
+          </View>
+        )}
+      </ScrollView>
 
-      {/* Full-Screen Alarm Modal Ekranı */}
+      {/* Tam Ekran Akıllı Alarm Modalı */}
       <AlarmScreen
         isRinging={isAlarmRinging}
         onStopAlarm={handleStopAlarm}
@@ -628,223 +592,186 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
-    padding: 16,
+    backgroundColor: Colors.background,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 32,
     alignItems: 'center',
   },
-  alarmCard: {
+  heroSection: {
+    alignItems: 'center',
+    marginVertical: 12,
+  },
+  heroStatusText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    letterSpacing: 1.5,
+    marginTop: 8,
+  },
+  heroSubText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  mainActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
+    height: 56, // 44px+ touch standard
+    borderRadius: 28,
+    gap: 10,
+    marginBottom: 20,
+    elevation: 6,
+    shadowColor: Colors.primary,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  startActionButton: {
+    backgroundColor: Colors.primary,
+  },
+  stopActionButton: {
+    backgroundColor: Colors.snore,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  glassCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#38bdf8',
+    borderColor: Colors.borderSubtle,
+  },
+  cardHeaderTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textMuted,
+    letterSpacing: 1.2,
+    marginBottom: 10,
   },
   alarmHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
   },
-  alarmCardTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#38bdf8',
+  alarmSummaryBody: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
   },
-  alarmTouchableSummary: {
+  alarmTimeDisplay: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: Colors.textPrimary,
+    letterSpacing: 1,
+  },
+  alarmSubDetail: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  editPill: {
+    backgroundColor: Colors.surfaceElevated,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  editPillText: {
+    color: Colors.accent,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  metricsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingTop: 4,
   },
-  alarmSummaryLeft: {
-    flexDirection: 'column',
+  metricItem: {
+    alignItems: 'center',
+    flex: 1,
   },
-  alarmTimeBig: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#f8fafc',
-    letterSpacing: 1,
-  },
-  alarmSoundLabel: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  alarmSummaryRight: {
-    alignItems: 'flex-end',
-  },
-  alarmWindowBadge: {
-    backgroundColor: '#0369a1',
-    color: '#e0f2fe',
+  metricLabel: {
     fontSize: 11,
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    fontWeight: '600',
-    overflow: 'hidden',
-  },
-  editAlarmText: {
-    color: '#38bdf8',
-    fontSize: 12,
-    marginTop: 6,
-    fontWeight: '500',
-  },
-  serverBox: {
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 10,
-  },
-  serverLabel: {
-    color: '#94a3b8',
-    fontSize: 11,
-    fontWeight: '600',
+    color: Colors.textMuted,
     marginBottom: 4,
   },
-  serverInput: {
-    backgroundColor: '#0f172a',
-    color: '#f8fafc',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
+  metricValue: {
+    fontSize: 18,
+    fontWeight: '700',
   },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 14,
-    padding: 14,
-    alignItems: 'center',
-    width: '100%',
-    maxWidth: 360,
-    marginBottom: 10,
-  },
-  sensorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    width: '100%',
-    marginBottom: 8,
-  },
-  sensorItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  sensorLabel: {
-    color: '#94a3b8',
-    fontSize: 11,
-    marginBottom: 2,
-  },
-  sensorValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#38bdf8',
-  },
-  movementValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#f59e0b',
-  },
-  movementHint: {
-    color: '#fbbf24',
-    fontSize: 10,
-    marginBottom: 6,
-  },
-  sensorDivider: {
+  metricDivider: {
     width: 1,
-    height: 30,
-    backgroundColor: '#334155',
+    height: 28,
+    backgroundColor: Colors.borderSubtle,
   },
-  badgeContainer: {
-    marginTop: 2,
-  },
-  statusBadge: {
-    fontSize: 12,
-    paddingVertical: 3,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-    overflow: 'hidden',
-    fontWeight: '600',
-  },
-  activeBadge: {
-    backgroundColor: '#065f46',
-    color: '#34d399',
-  },
-  inactiveBadge: {
-    backgroundColor: '#334155',
-    color: '#94a3b8',
-  },
-  recordingText: {
-    color: '#f87171',
-    fontWeight: 'bold',
-    marginTop: 6,
-    fontSize: 13,
-  },
-  buttonWrapper: {
+  serverCard: {
     width: '100%',
     maxWidth: 360,
-    marginBottom: 12,
-  },
-  logContainer: {
-    flex: 1,
-    width: '100%',
-    maxWidth: 360,
-    backgroundColor: '#1e293b',
+    backgroundColor: Colors.surface,
     borderRadius: 12,
     padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
   },
-  logHeader: {
-    color: '#e2e8f0',
-    fontSize: 14,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  logScroll: {
-    flex: 1,
-  },
-  emptyText: {
-    color: '#64748b',
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 14,
-  },
-  logItem: {
-    backgroundColor: '#0f172a',
-    borderRadius: 6,
-    padding: 8,
+  serverCardLabel: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontWeight: '600',
     marginBottom: 6,
-    borderLeftWidth: 3,
-    borderLeftColor: '#38bdf8',
   },
-  logRow: {
+  serverInput: {
+    backgroundColor: Colors.background,
+    color: Colors.textPrimary,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+  },
+  logItemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSubtle,
   },
-  logType: {
-    color: '#38bdf8',
-    fontWeight: 'bold',
+  logItemLeft: {
+    flex: 1,
+  },
+  logItemType: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+  },
+  logItemText: {
     fontSize: 12,
-  },
-  logTime: {
-    color: '#64748b',
-    fontSize: 10,
-  },
-  logDetail: {
-    color: '#94a3b8',
-    fontSize: 11,
-    marginTop: 3,
-  },
-  logText: {
-    color: '#fef08a',
-    fontSize: 12,
+    color: Colors.speech,
     fontStyle: 'italic',
-    marginTop: 3,
+    marginTop: 2,
+  },
+  logItemTime: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    marginLeft: 8,
   },
 });

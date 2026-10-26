@@ -9,18 +9,16 @@ import LiveAudioStream from 'react-native-live-audio-stream';
 import BackgroundJob from 'react-native-background-actions';
 import { supabase } from './supabase';
 import { navigationRef, navigate } from './RootNavigation';
+import { Colors } from './theme';
+import { MoonIcon, ChartIcon, SettingsIcon } from './components/Icons';
 
 import AuthScreen from './screens/AuthScreen';
 import HomeScreen from './screens/HomeScreen';
 import ReportScreen from './screens/ReportScreen';
 import SettingsScreen from './screens/SettingsScreen';
 
-// Notifee Arka Plan Olayı Dinleyicisi (iOS Kilit Ekranı Bildirime Tıklama)
 notifee.onBackgroundEvent(async ({ type, detail }) => {
   if (type === EventType.PRESS) {
-    console.log('Kullanıcı iOS alarm bildirimine tıkladı ve uyandı!', detail.notification);
-
-    // 1. Dinleme servislerini durdur
     try {
       LiveAudioStream.stop();
       await BackgroundJob.stop();
@@ -28,12 +26,10 @@ notifee.onBackgroundEvent(async ({ type, detail }) => {
       console.warn('Arka plan servisi durdurma uyarısı:', e);
     }
 
-    // 2. Bildirimi ekrandan temizle
     if (detail.notification?.id) {
       await notifee.cancelNotification(detail.notification.id);
     }
 
-    // 3. Kullanıcıyı doğrudan Gece Raporu ekranına yönlendir
     navigate('Report');
   }
 });
@@ -45,10 +41,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Bildirim izinlerini iste
     notifee.requestPermission();
 
-    // 2. Ön plandayken bildirime tıklama dinleyicisi
     const unsubscribeForeground = notifee.onForegroundEvent(async ({ type, detail }) => {
       if (type === EventType.PRESS) {
         if (detail.notification?.id) {
@@ -58,7 +52,6 @@ export default function App() {
       }
     });
 
-    // 3. Supabase Oturum Kontrolü
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setLoading(false);
@@ -86,14 +79,13 @@ export default function App() {
           flex: 1,
           justifyContent: 'center',
           alignItems: 'center',
-          backgroundColor: '#0f172a',
+          backgroundColor: Colors.background,
         }}>
-        <ActivityIndicator size="large" color="#38bdf8" />
+        <ActivityIndicator size="large" color={Colors.accent} />
       </View>
     );
   }
 
-  // Kullanıcı giriş yapmadıysa Auth ekranı
   if (!session) {
     return (
       <>
@@ -103,35 +95,35 @@ export default function App() {
     );
   }
 
-  // Giriş yapıldıysa ana uygulama
   return (
     <NavigationContainer ref={navigationRef}>
       <StatusBar barStyle="light-content" />
       <Tab.Navigator
         screenOptions={{
           headerStyle: {
-            backgroundColor: '#0f172a',
+            backgroundColor: Colors.background,
             borderBottomWidth: 1,
-            borderBottomColor: '#1e293b',
+            borderBottomColor: Colors.borderSubtle,
           },
-          headerTintColor: '#f8fafc',
+          headerTintColor: Colors.textPrimary,
           headerTitleStyle: {
             fontWeight: 'bold',
             fontSize: 18,
           },
           tabBarStyle: {
-            backgroundColor: '#0f172a',
+            backgroundColor: Colors.surfaceSubtle,
             borderTopWidth: 1,
-            borderTopColor: '#1e293b',
-            paddingBottom: 6,
-            paddingTop: 6,
-            height: 60,
+            borderTopColor: Colors.borderSubtle,
+            paddingBottom: 8,
+            paddingTop: 8,
+            height: 64, // 44px+ touch standard
           },
-          tabBarActiveTintColor: '#38bdf8',
-          tabBarInactiveTintColor: '#64748b',
+          tabBarActiveTintColor: Colors.accent,
+          tabBarInactiveTintColor: Colors.textMuted,
           tabBarLabelStyle: {
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: '600',
+            marginTop: 2,
           },
         }}>
         <Tab.Screen
@@ -140,6 +132,7 @@ export default function App() {
           options={{
             title: 'Uyku Takibi',
             tabBarLabel: 'Takip',
+            tabBarIcon: ({ color, size }) => <MoonIcon size={size} color={color} />,
           }}
         />
         <Tab.Screen
@@ -148,6 +141,7 @@ export default function App() {
           options={{
             title: 'Gece Raporu',
             tabBarLabel: 'Uyku Raporu',
+            tabBarIcon: ({ color, size }) => <ChartIcon size={size} color={color} />,
           }}
         />
         <Tab.Screen
@@ -156,6 +150,7 @@ export default function App() {
           options={{
             title: 'Alarm Ayarları',
             tabBarLabel: 'Ayarlar',
+            tabBarIcon: ({ color, size }) => <SettingsIcon size={size} color={color} />,
           }}
         />
       </Tab.Navigator>

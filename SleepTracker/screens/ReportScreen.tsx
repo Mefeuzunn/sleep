@@ -12,28 +12,48 @@ import {
 import { supabase } from '../supabase';
 import HypnogramChart, { HypnogramDataPoint } from '../HypnogramChart';
 import { processSleepData, RawMovement, RawAudioEvent } from '../sleepProcessor';
+import { Colors } from '../theme';
+import SleepQualityScore from '../components/SleepQualityScore';
 
-interface SleepReportScreenProps {
+interface ReportScreenProps {
   onBack?: () => void;
 }
 
-export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
+export default function ReportScreen({ onBack }: ReportScreenProps) {
   const [speechEvents, setSpeechEvents] = useState<RawAudioEvent[]>([]);
   const [snoreCount, setSnoreCount] = useState(0);
   const [coughCount, setCoughCount] = useState(0);
   const [movementCount, setMovementCount] = useState(0);
   const [hypnogramData, setHypnogramData] = useState<HypnogramDataPoint[]>([]);
+  const [sleepScore, setSleepScore] = useState(84);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const estimateSleepStage = () => {
-    if (movementCount > 25) {
-      return { stage: 'Hafif Uyku / Huzursuz', color: '#f59e0b', desc: 'Sık vücut dönüşleri ve hareketler kaydedildi.' };
+  // Uyku Kalite Skoru Hesaplama Motoru (0 - 100)
+  const calculateSleepScore = (moves: number, snores: number, coughs: number, epochsCount: number) => {
+    let score = 90; // Başlangıç baz puanı
+
+    // Hareket / Dönüş cezası (Her aşırı hareket -0.5 puan)
+    if (moves > 10) {
+      score -= Math.min((moves - 10) * 0.4, 25);
     }
-    if (movementCount < 6 && snoreCount < 5) {
-      return { stage: 'Derin Uyku', color: '#10b981', desc: 'Vücut neredeyse tamamen hareketsiz ve dinlenme modunda.' };
+
+    // Horlama cezası
+    if (snores > 0) {
+      score -= Math.min(snores * 1.5, 20);
     }
-    return { stage: 'REM / Dengeli Uyku', color: '#6366f1', desc: 'Düşük kas aktivitesi, rüya ve zihinsel onarım evresi.' };
+
+    // Öksürük cezası
+    if (coughs > 0) {
+      score -= Math.min(coughs * 2.0, 15);
+    }
+
+    // Seans uzunluğu bonusu
+    if (epochsCount >= 20) {
+      score += 10;
+    }
+
+    return Math.max(Math.min(Math.round(score), 100), 20);
   };
 
   const fetchNightData = async () => {
@@ -49,13 +69,15 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
         .order('created_at', { ascending: true });
 
       let loadedEvents: RawAudioEvent[] = [];
-      if (eventError) {
-        console.error('Supabase ses verisi çekme hatası:', eventError);
-      } else if (eventData) {
+      let currentSnores = 0;
+      let currentCoughs = 0;
+      if (!eventError && eventData) {
         loadedEvents = eventData;
+        currentSnores = eventData.filter((e: RawAudioEvent) => e.event_type === 'snore').length;
+        currentCoughs = eventData.filter((e: RawAudioEvent) => e.event_type === 'cough').length;
         setSpeechEvents(eventData.filter((e: RawAudioEvent) => e.event_type === 'speech'));
-        setSnoreCount(eventData.filter((e: RawAudioEvent) => e.event_type === 'snore').length);
-        setCoughCount(eventData.filter((e: RawAudioEvent) => e.event_type === 'cough').length);
+        setSnoreCount(currentSnores);
+        setCoughCount(currentCoughs);
       }
 
       // 2. Hareket Verilerini Getir
@@ -66,18 +88,22 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
         .order('created_at', { ascending: true });
 
       let loadedMovements: RawMovement[] = [];
-      if (moveError) {
-        console.warn('Supabase hareket verisi çekme uyarısı:', moveError.message);
-      } else if (moveData) {
+      let currentMoves = 0;
+      if (!moveError && moveData) {
         loadedMovements = moveData;
-        setMovementCount(moveData.length);
+        currentMoves = moveData.length;
+        setMovementCount(currentMoves);
       }
 
-      // 3. 15 Dakikalık (Epoch) Gruplama Algoritması ile Hipnogram Grafiği Üret
+      // 3. 15 Dakikalık (Epoch) Gruplama Algoritması
       const calculatedChart = processSleepData(loadedMovements, loadedEvents);
       setHypnogramData(calculatedChart);
+
+      // 4. Skor Hesabı
+      const dynamicScore = calculateSleepScore(currentMoves, currentSnores, currentCoughs, calculatedChart.length);
+      setSleepScore(dynamicScore);
     } catch (err) {
-      console.error('Rapor yüklenirken hata:', err);
+      console.error('Rapor yükleme hatası:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -93,80 +119,73 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
     fetchNightData();
   };
 
-  const currentSleepStage = estimateSleepStage();
-
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        {onBack && (
-          <TouchableOpacity onPress={onBack} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Geri</Text>
-          </TouchableOpacity>
-        )}
-        <Text style={styles.title}>Gece Raporu</Text>
-      </View>
-
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 24 }}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#38bdf8"
+            tintColor={Colors.accent}
           />
         }>
-        {/* 15 Dakikalık Epoch Hipnogram Uyku Döngüsü Grafiği */}
+        {/* Başlık */}
+        <View style={styles.header}>
+          {onBack && (
+            <TouchableOpacity onPress={onBack} style={styles.backButton}>
+              <Text style={styles.backButtonText}>← Geri</Text>
+            </TouchableOpacity>
+          )}
+          <Text style={styles.title}>Gece Analizi</Text>
+        </View>
+
+        {/* 1. Uyku Kalite Skoru Kartı */}
+        <SleepQualityScore score={sleepScore} />
+
+        {/* 2. Hipnogram Uyku Döngüsü Grafiği */}
         <HypnogramChart data={hypnogramData} />
 
-        {/* Uyku Evresi Tahmin Kartı */}
-        <View style={[styles.stageCard, { borderColor: currentSleepStage.color }]}>
-          <Text style={styles.stageTitle}>Genel Uyku Durumu:</Text>
-          <Text style={[styles.stageName, { color: currentSleepStage.color }]}>
-            {currentSleepStage.stage}
-          </Text>
-          <Text style={styles.stageDesc}>{currentSleepStage.desc}</Text>
-        </View>
-
-        {/* İstatistik Kartları */}
+        {/* 3. Biyometrik İstatistik Kartları */}
         <View style={styles.statsRow}>
-          <View style={[styles.statsCard, styles.movementCard]}>
-            <Text style={styles.statNumber}>{movementCount}</Text>
-            <Text style={styles.statLabel}>Dönüş / Hareket</Text>
+          <View style={[styles.statBox, { borderColor: Colors.borderSubtle }]}>
+            <Text style={styles.statBoxValue}>{movementCount}</Text>
+            <Text style={styles.statBoxLabel}>Dönüş</Text>
           </View>
-
-          <View style={[styles.statsCard, styles.snoreCard]}>
-            <Text style={styles.statNumber}>{snoreCount}</Text>
-            <Text style={styles.statLabel}>Horlama</Text>
+          <View style={[styles.statBox, { borderColor: Colors.borderSubtle }]}>
+            <Text style={[styles.statBoxValue, { color: Colors.snore }]}>{snoreCount}</Text>
+            <Text style={styles.statBoxLabel}>Horlama</Text>
           </View>
-
-          <View style={[styles.statsCard, styles.coughCard]}>
-            <Text style={styles.statNumber}>{coughCount}</Text>
-            <Text style={styles.statLabel}>Öksürük</Text>
+          <View style={[styles.statBox, { borderColor: Colors.borderSubtle }]}>
+            <Text style={[styles.statBoxValue, { color: Colors.cough }]}>{coughCount}</Text>
+            <Text style={styles.statBoxLabel}>Öksürük</Text>
           </View>
         </View>
 
-        <Text style={styles.subtitle}>Uykuda Söyledikleriniz ({speechEvents.length}):</Text>
+        {/* 4. Konuşma Çözümleri */}
+        <Text style={styles.sectionHeader}>Uykuda Konuşmalar ({speechEvents.length})</Text>
 
         {loading && !refreshing ? (
-          <ActivityIndicator size="large" color="#38bdf8" style={{ marginTop: 20 }} />
+          <ActivityIndicator size="large" color={Colors.accent} style={{ marginTop: 20 }} />
         ) : speechEvents.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>Bu gece kaydedilen konuşma bulunamadı.</Text>
+            <Text style={styles.emptyText}>Bu gece konuşma veya fısıltı kaydedilmedi.</Text>
           </View>
         ) : (
           speechEvents.map((item, idx) => (
             <View key={item.id || idx} style={styles.speechCard}>
               <View style={styles.cardHeader}>
-                <Text style={styles.time}>
-                  {new Date(item.created_at).toLocaleTimeString('tr-TR')}
+                <Text style={styles.timeText}>
+                  {new Date(item.created_at).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
                 </Text>
                 {item.confidence && (
-                  <Text style={styles.confidence}>
+                  <Text style={styles.confidenceBadge}>
                     %{(item.confidence * 100).toFixed(0)} güven
                   </Text>
                 )}
               </View>
-              <Text style={styles.transcript}>"{item.transcript || '(Metin yok)'}"</Text>
+              <Text style={styles.transcriptText}>"{item.transcript || '(Metin çözümlenemedi)'}"</Text>
             </View>
           ))
         )}
@@ -178,8 +197,12 @@ export default function SleepReportScreen({ onBack }: SleepReportScreenProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
-    padding: 16,
+    backgroundColor: Colors.background,
+  },
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 36,
   },
   header: {
     flexDirection: 'row',
@@ -189,42 +212,19 @@ const styles = StyleSheet.create({
   backButton: {
     paddingVertical: 6,
     paddingHorizontal: 12,
-    backgroundColor: '#1e293b',
+    backgroundColor: Colors.surfaceElevated,
     borderRadius: 8,
     marginRight: 12,
   },
   backButtonText: {
-    color: '#38bdf8',
+    color: Colors.accent,
     fontSize: 14,
     fontWeight: '600',
   },
   title: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: 'bold',
-    color: '#f8fafc',
-  },
-  stageCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-    borderWidth: 1.5,
-  },
-  stageTitle: {
-    fontSize: 12,
-    color: '#94a3b8',
-    textTransform: 'uppercase',
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  stageName: {
-    fontSize: 19,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  stageDesc: {
-    fontSize: 12,
-    color: '#cbd5e1',
+    color: Colors.textPrimary,
   },
   statsRow: {
     flexDirection: 'row',
@@ -232,75 +232,72 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     gap: 8,
   },
-  statsCard: {
+  statBox: {
     flex: 1,
+    backgroundColor: Colors.surface,
     paddingVertical: 14,
-    paddingHorizontal: 6,
-    borderRadius: 12,
+    borderRadius: 14,
     alignItems: 'center',
+    borderWidth: 1,
   },
-  movementCard: {
-    backgroundColor: '#78350f',
+  statBoxValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: Colors.textPrimary,
   },
-  snoreCard: {
-    backgroundColor: '#7f1d1d',
-  },
-  coughCard: {
-    backgroundColor: '#374151',
-  },
-  statNumber: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  statLabel: {
+  statBoxLabel: {
     fontSize: 11,
-    color: '#cbd5e1',
+    color: Colors.textMuted,
     marginTop: 4,
-    textAlign: 'center',
+    fontWeight: '500',
   },
-  subtitle: {
-    fontSize: 17,
+  sectionHeader: {
+    fontSize: 16,
     fontWeight: '700',
-    color: '#e2e8f0',
+    color: Colors.textPrimary,
     marginBottom: 12,
   },
   speechCard: {
-    backgroundColor: '#1e293b',
-    padding: 14,
-    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    padding: 16,
+    borderRadius: 14,
     marginBottom: 10,
-    borderLeftWidth: 4,
-    borderLeftColor: '#38bdf8',
+    borderLeftWidth: 3,
+    borderLeftColor: Colors.speech,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 6,
   },
-  time: {
+  timeText: {
     fontSize: 12,
-    color: '#94a3b8',
-    fontWeight: '500',
-  },
-  confidence: {
-    fontSize: 11,
-    color: '#34d399',
+    color: Colors.textMuted,
     fontWeight: '600',
   },
-  transcript: {
+  confidenceBadge: {
+    fontSize: 11,
+    color: Colors.deepSleep,
+    fontWeight: '600',
+  },
+  transcriptText: {
     fontSize: 15,
     fontStyle: 'italic',
-    color: '#f8fafc',
+    color: Colors.textPrimary,
     lineHeight: 22,
   },
   emptyContainer: {
     padding: 24,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
   },
   emptyText: {
-    color: '#64748b',
-    fontSize: 14,
-    textAlign: 'center',
+    color: Colors.textMuted,
+    fontSize: 13,
   },
 });

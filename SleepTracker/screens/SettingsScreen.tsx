@@ -15,6 +15,7 @@ import DateTimePicker, {
 } from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../supabase';
+import { Colors } from '../theme';
 
 const WAKE_WINDOWS = [15, 30, 45];
 const SOUND_OPTIONS = ['Kuş Sesleri', 'Orman', 'Klasik Alarm'];
@@ -60,9 +61,7 @@ export default function SettingsScreen({
         key,
         typeof value === 'string' ? value : JSON.stringify(value),
       );
-      if (onSettingsSaved) {
-        onSettingsSaved();
-      }
+      if (onSettingsSaved) onSettingsSaved();
     } catch (e) {
       console.error('Ayar kaydedilemedi', e);
     }
@@ -76,7 +75,6 @@ export default function SettingsScreen({
     }
   };
 
-  // Çıkış Yapma Fonksiyonu
   const handleLogout = async () => {
     Alert.alert('Çıkış Yap', 'Hesabınızdan çıkış yapmak istediğinize emin misiniz?', [
       { text: 'İptal', style: 'cancel' },
@@ -85,11 +83,7 @@ export default function SettingsScreen({
         style: 'destructive',
         onPress: async () => {
           const { error } = await supabase.auth.signOut();
-          if (error) {
-            Alert.alert('Çıkış Hatası', error.message);
-          }
-          // Çıkış başarılı olduğunda App.tsx içindeki onAuthStateChange tetiklenir
-          // ve ekran otomatik olarak AuthScreen'e döner.
+          if (error) Alert.alert('Çıkış Hatası', error.message);
         },
       },
     ]);
@@ -115,7 +109,8 @@ export default function SettingsScreen({
           <Text style={styles.label}>Uyanma Saati</Text>
           <TouchableOpacity
             onPress={() => setShowPicker(true)}
-            style={styles.timeTouchable}>
+            style={styles.timeTouchable}
+            activeOpacity={0.7}>
             <Text style={styles.timeText}>
               {alarmTime.toLocaleTimeString('tr-TR', {
                 hour: '2-digit',
@@ -148,8 +143,8 @@ export default function SettingsScreen({
                 setIsSmartAlarmActive(val);
                 saveSettings('isSmartAlarmActive', val);
               }}
-              trackColor={{ false: '#334155', true: '#38bdf8' }}
-              thumbColor={isSmartAlarmActive ? '#0284c7' : '#94a3b8'}
+              trackColor={{ false: '#334155', true: Colors.primary }}
+              thumbColor={isSmartAlarmActive ? Colors.primaryLight : '#94A3B8'}
             />
           </View>
 
@@ -210,7 +205,7 @@ export default function SettingsScreen({
         </View>
 
         {/* ÇIKIŞ YAP BUTONU */}
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.8}>
           <Text style={styles.logoutText}>Hesaptan Çıkış Yap</Text>
         </TouchableOpacity>
 
@@ -223,11 +218,11 @@ export default function SettingsScreen({
 const styles = StyleSheet.create({
   safeContainer: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: Colors.background,
   },
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: Colors.background,
     paddingHorizontal: 16,
   },
   scrollContent: {
@@ -241,50 +236,50 @@ const styles = StyleSheet.create({
   backButton: {
     paddingVertical: 6,
     paddingHorizontal: 12,
-    backgroundColor: '#1e293b',
+    backgroundColor: Colors.surfaceElevated,
     borderRadius: 8,
     marginRight: 12,
   },
   backButtonText: {
-    color: '#38bdf8',
+    color: Colors.accent,
     fontSize: 14,
     fontWeight: '600',
   },
   header: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#f8fafc',
+    color: Colors.textPrimary,
   },
   card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 14,
-    padding: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 18,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: Colors.borderSubtle,
   },
   label: {
     fontSize: 16,
-    color: '#f8fafc',
+    color: Colors.textPrimary,
     fontWeight: '600',
   },
   hint: {
     fontSize: 12,
-    color: '#94a3b8',
+    color: Colors.textMuted,
     marginTop: 2,
   },
   timeTouchable: {
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   timeText: {
-    fontSize: 48,
-    fontWeight: 'bold',
-    color: '#38bdf8',
-    letterSpacing: 1,
+    fontSize: 52,
+    fontWeight: '800',
+    color: Colors.accent,
+    letterSpacing: 1.5,
   },
   tapToChange: {
-    color: '#64748b',
+    color: Colors.textMuted,
     fontSize: 12,
     marginTop: 4,
   },
@@ -296,12 +291,12 @@ const styles = StyleSheet.create({
   windowContainer: {
     marginTop: 16,
     borderTopWidth: 1,
-    borderTopColor: '#334155',
+    borderTopColor: Colors.borderSubtle,
     paddingTop: 14,
   },
   subLabel: {
     fontSize: 13,
-    color: '#94a3b8',
+    color: Colors.textSecondary,
     marginBottom: 10,
     fontWeight: '500',
   },
@@ -312,39 +307,39 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: '#0f172a',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 22,
+    backgroundColor: Colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: Colors.borderSubtle,
   },
   chipActive: {
-    backgroundColor: '#0284c7',
-    borderColor: '#38bdf8',
+    backgroundColor: Colors.primaryDark,
+    borderColor: Colors.primaryLight,
   },
   chipText: {
-    color: '#94a3b8',
+    color: Colors.textSecondary,
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   chipTextActive: {
-    color: '#ffffff',
+    color: '#FFFFFF',
     fontWeight: 'bold',
   },
   logoutButton: {
     backgroundColor: 'transparent',
     borderWidth: 1.5,
-    borderColor: '#ef4444',
-    padding: 15,
-    borderRadius: 12,
+    borderColor: Colors.snore,
+    height: 52,
+    borderRadius: 26,
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 10,
-    marginBottom: 10,
   },
   logoutText: {
-    color: '#ef4444',
-    fontSize: 16,
+    color: Colors.snore,
+    fontSize: 15,
     fontWeight: 'bold',
   },
 });
